@@ -1,4 +1,4 @@
-//! AMD GPU collector using AMD SMI via CXX bridge.
+//! AMD GPU collector using AMD SMI via pure-Rust dlopen (is-amd-ffi).
 
 use async_trait::async_trait;
 use tracing::{debug, warn};
@@ -6,7 +6,7 @@ use tracing::{debug, warn};
 use crate::collector::{Collector, GpuSnapshot};
 use crate::error::{ExporterError, Result};
 
-/// AMD GPU metrics collector powered by AMD SMI (via C++ bridge).
+/// AMD GPU metrics collector powered by AMD SMI (dlopen of libamd_smi).
 pub struct AmdCollector {
     device_count: u32,
     hostname: String,

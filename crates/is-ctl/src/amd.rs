@@ -1,4 +1,4 @@
-//! AMD GPU control operations via AMD SMI (is-amd-ffi).
+//! AMD GPU control operations via AMD SMI (is-amd-ffi, pure-Rust dlopen).
 
 use anyhow::{Result, bail};
 use colored::Colorize;
@@ -195,17 +195,7 @@ pub fn set_perf(index: u32, level: &PerfLevel) -> Result<()> {
         PerfLevel::High => "high",
     };
 
-    let success = {
-        #[cfg(all(feature = "amd", target_arch = "x86_64"))]
-        {
-            let cxx_str = cxx::let_cxx_string!(s = level_str);
-            is_amd_ffi::amd_smi_set_perf_level(index, &s)
-        }
-        #[cfg(not(all(feature = "amd", target_arch = "x86_64")))]
-        {
-            is_amd_ffi::amd_smi_set_perf_level(index, level_str)
-        }
-    };
+    let success = is_amd_ffi::amd_smi_set_perf_level(index, level_str);
 
     if !success {
         bail!(
@@ -242,17 +232,7 @@ pub fn reset_clocks(index: u32) -> Result<()> {
     }
 
     // Reset by setting perf level to auto
-    let success = {
-        #[cfg(all(feature = "amd", target_arch = "x86_64"))]
-        {
-            let cxx_str = cxx::let_cxx_string!(s = "auto");
-            is_amd_ffi::amd_smi_set_perf_level(index, &s)
-        }
-        #[cfg(not(all(feature = "amd", target_arch = "x86_64")))]
-        {
-            is_amd_ffi::amd_smi_set_perf_level(index, "auto")
-        }
-    };
+    let success = is_amd_ffi::amd_smi_set_perf_level(index, "auto");
 
     if !success {
         bail!(

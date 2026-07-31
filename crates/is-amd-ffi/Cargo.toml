@@ -4,17 +4,13 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 repository.workspace = true
-description = "AMD SMI FFI bridge via CXX — shared library for AMD GPU operations"
-build = "build.rs"
+description = "Pure-Rust AMD SMI via dlopen — shared library for AMD GPU telemetry and control"
 
 [features]
 default = []
-# When this feature is enabled AND on x86_64, the C++ AMD SMI bridge is compiled.
-# Otherwise, stub implementations are provided.
+# When enabled on x86_64, resolves libamd_smi.so at runtime.
+# Otherwise stub implementations are provided.
 amd = []
 
 [dependencies]
-cxx = "1.0"
-
-[build-dependencies]
-cxx-build = "1.0"
+libloading = "0.8"
