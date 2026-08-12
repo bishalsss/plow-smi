@@ -2,13 +2,13 @@
 
 use clap::Parser;
 
-/// GPU Metrics Exporter — Prometheus exporter for AMD, NVIDIA, and system metrics.
+/// GPU Metrics Exporter — Prometheus exporter for AMD, NVIDIA, Intel, and system metrics.
 #[derive(Parser, Debug, Clone)]
 #[command(
     name = "is-exporter",
     version,
     about = "Professional GPU metrics exporter for Prometheus",
-    long_about = "Collects GPU and system metrics from AMD (via ROCm SMI), NVIDIA (via NVML), \
+    long_about = "Collects GPU and system metrics via is-gpu (NVML / AMD SMI / Level Zero) \
                   and system sources, exposing them as Prometheus metrics over HTTP."
 )]
 pub struct Config {
@@ -28,6 +28,10 @@ pub struct Config {
     #[arg(long)]
     pub amd: bool,
 
+    /// Enable Intel GPU metrics collection.
+    #[arg(long)]
+    pub intel: bool,
+
     /// Enable system metrics collection (CPU, memory, disk, network).
     #[arg(long)]
     pub system: bool,
@@ -36,7 +40,7 @@ pub struct Config {
     #[arg(long)]
     pub tpu: bool,
 
-    /// Enable all collectors (equivalent to --nvidia --amd --system --tpu).
+    /// Enable all collectors (equivalent to --nvidia --amd --intel --system --tpu).
     #[arg(long)]
     pub all: bool,
 
@@ -60,6 +64,16 @@ impl Config {
         self.amd || self.all
     }
 
+    /// Returns true if Intel collection is enabled (either explicitly or via --all).
+    pub fn intel_enabled(&self) -> bool {
+        self.intel || self.all
+    }
+
+    /// Returns true if any GPU vendor flag is enabled.
+    pub fn gpu_enabled(&self) -> bool {
+        self.nvidia_enabled() || self.amd_enabled() || self.intel_enabled()
+    }
+
     /// Returns true if system collection is enabled (either explicitly or via --all).
     pub fn system_enabled(&self) -> bool {
         self.system || self.all
@@ -72,6 +86,6 @@ impl Config {
 
     /// Returns true if no collectors are explicitly enabled.
     pub fn no_collectors_enabled(&self) -> bool {
-        !self.nvidia_enabled() && !self.amd_enabled() && !self.system_enabled() && !self.tpu_enabled()
+        !self.gpu_enabled() && !self.system_enabled() && !self.tpu_enabled()
     }
 }

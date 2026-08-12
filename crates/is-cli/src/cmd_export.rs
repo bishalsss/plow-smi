@@ -21,36 +21,38 @@ pub fn run(nvidia: bool, amd: bool, system: bool, all: bool, port: u16, bind: St
         .build()?;
 
     rt.block_on(async move {
-        let enable_nvidia = nvidia || all;
-        let enable_amd = amd || all;
         let enable_system = system || all;
-
-        // If nothing explicitly enabled, default to nvidia + system
-        let (enable_nvidia, enable_system) = if !nvidia && !amd && !system && !all {
-            (true, true)
-        } else {
-            (enable_nvidia, enable_system)
-        };
+        // Default: GPU (all vendors) + system when nothing was selected.
+        let (enable_nvidia, enable_amd, enable_intel, enable_system) =
+            if !nvidia && !amd && !system && !all {
+                (true, true, true, true)
+            } else if all {
+                (true, true, true, true)
+            } else {
+                (nvidia, amd, false, enable_system)
+            };
 
         let mut manager = CollectorManager::new();
 
-        if enable_nvidia {
-            info!("Registering NVIDIA collector...");
-            let nvidia_c = collector::nvidia::NvidiaCollector::new();
-            if let Err(e) = manager.register(Box::new(nvidia_c)).await {
-                warn!(error = %e, "NVIDIA collector failed to initialize");
+        let filter = collector::gpu::VendorFilter {
+            nvidia: enable_nvidia,
+            amd: enable_amd,
+            intel: enable_intel,
+        };
+        if filter.nvidia || filter.amd || filter.intel {
+            info!(
+                "Registering is-gpu collector (nvidia={} amd={} intel={})",
+                filter.nvidia, filter.amd, filter.intel
+            );
+            let gpu = collector::gpu::GpuCollector::new(filter);
+            if let Err(e) = manager.register(Box::new(gpu)).await {
+                warn!(error = %e, "GPU collector failed to initialize");
             }
-        }
-
-        if enable_amd {
-            info!("AMD collector requested");
-            // Will use is-amd-ffi when --features amd is enabled
         }
 
         let interval = Duration::from_secs(5);
         let manager = Arc::new(manager);
 
-        // Spawn GPU metrics collection loop
         if manager.collector_count() > 0 {
             let manager_clone = Arc::clone(&manager);
             tokio::spawn(async move {
@@ -65,7 +67,6 @@ pub fn run(nvidia: bool, amd: bool, system: bool, all: bool, port: u16, bind: St
             warn!("No GPU collectors active");
         }
 
-        // System metrics
         if enable_system {
             use is_exporter::collector::system::SystemCollector;
             use is_exporter::metrics::system_metrics::update_system_metrics;
@@ -86,7 +87,6 @@ pub fn run(nvidia: bool, amd: bool, system: bool, all: bool, port: u16, bind: St
             }
         }
 
-        // Health handler
         async fn health_handler() -> &'static str {
             "OK"
         }

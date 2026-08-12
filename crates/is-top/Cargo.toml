@@ -7,11 +7,11 @@ repository.workspace = true
 description = "Professional terminal GPU & system monitor — like htop for GPUs"
 
 [dependencies]
-# Use the exporter library for GPU + system data collection
-is-exporter = { path = "../is-exporter", default-features = true, features = ["nvidia", "system"] }
+# Use the exporter library for GPU + system data collection (is-gpu backed)
+is-exporter = { path = "../is-exporter", default-features = true, features = ["gpu", "system"] }
 
-# Shared NVIDIA library (direct access for GPU monitoring)
-is-nvidia = { path = "../is-nvidia", features = ["nvidia"] }
+# Process info type from unified GPU crate
+is-gpu = { path = "../is-gpu" }
 
 # TUI framework
 ratatui = "0.29"

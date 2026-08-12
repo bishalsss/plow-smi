@@ -68,6 +68,13 @@ enum Commands {
 
 #[derive(Subcommand)]
 pub enum CtlCommands {
+    /// List every GPU (NVIDIA + AMD + Intel)
+    #[command(name = "list")]
+    List {
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
+    },
+
     // ── NVIDIA ──────────────────────────────────────────────────────────────
     /// List all detected NVIDIA GPUs
     #[command(name = "nvidia-list")]
@@ -196,6 +203,21 @@ pub enum CtlCommands {
         /// Reset all GPUs
         #[arg(long)]
         all: bool,
+    },
+
+    /// List all detected Intel GPUs
+    #[command(name = "intel-list")]
+    IntelList {
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
+    },
+
+    /// Show detailed info for a specific Intel GPU
+    #[command(name = "intel-info")]
+    IntelInfo {
+        gpu: u32,
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
     },
 }
 

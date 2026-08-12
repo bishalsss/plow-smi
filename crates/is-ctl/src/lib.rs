@@ -1,18 +1,12 @@
 //! is-ctl — GPU power & clock control library.
 //!
-//! This crate provides the core control logic for NVIDIA and AMD GPUs.
-//! It can be used as a library by other crates (e.g., `is-cli`)
-//! or as a standalone binary (`is-ctl`).
-//!
-//! # Architecture
-//! - `nvidia` module: NVIDIA GPU control via NVML (requires `nvidia` feature)
-//! - `amd` module: AMD GPU control via AMD SMI (requires `amd` feature or stubs)
-//! - Shared types: `OutputFormat`, `PerfLevel`
-
-#[cfg(feature = "nvidia")]
-pub mod nvidia;
+//! Backed entirely by [`is_gpu`] (runtime NVML / AMD SMI / Level Zero). Used as a
+//! library by `is-cli` or as the standalone `is-ctl` binary.
 
 pub mod amd;
+pub mod intel;
+pub mod list;
+pub mod nvidia;
 
 use clap::ValueEnum;
 use serde::Serialize;
@@ -31,8 +25,6 @@ pub enum PerfLevel {
     Low,
     High,
 }
-
-// ─── Shared utilities ────────────────────────────────────────────────────────
 
 /// Format bytes into a human-readable string (GiB, MiB, or KiB).
 pub fn format_bytes(bytes: u64) -> String {

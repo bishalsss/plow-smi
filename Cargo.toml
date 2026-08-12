@@ -1,7 +1,6 @@
 [workspace]
 members = [
-    "crates/is-amd-ffi",
-    "crates/is-nvidia",
+    "crates/is-gpu",
     "crates/is-exporter",
     "crates/is-top",
     "crates/is-ctl",
