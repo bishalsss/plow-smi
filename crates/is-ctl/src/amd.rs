@@ -1,61 +1,49 @@
-//! AMD GPU control operations via AMD SMI (is-amd-ffi, pure-Rust dlopen).
+//! AMD GPU control via `is-gpu` (runtime AMD SMI).
 
 use anyhow::{Result, bail};
 use colored::Colorize;
+use is_gpu::{AmdBackend, GpuBackend};
 
 use crate::{format_bytes, GpuListEntry, OutputFormat, PerfLevel};
 
-/// Initialize AMD SMI or fail with a clear message.
-fn init_amd() -> Result<()> {
-    let ret = is_amd_ffi::amd_smi_init();
-    if ret != 0 {
-        bail!(
-            "Failed to initialize AMD SMI (error code: {ret}).\n\
+fn init_backend() -> Result<AmdBackend> {
+    AmdBackend::try_load().map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to initialize AMD SMI via is-gpu.\n\
              Ensure AMD GPU drivers and ROCm are installed.\n\
-             Hint: Run 'rocm-smi' to check driver status."
-        );
-    }
-    Ok(())
+             Hint: Run 'rocm-smi' to check driver status.\nError: {e}"
+        )
+    })
 }
 
-// ─── LIST ────────────────────────────────────────────────────────────────────
-
 pub fn list_gpus(format: &OutputFormat) -> Result<()> {
-    init_amd()?;
-    let count = is_amd_ffi::amd_smi_get_device_count();
-
+    let mut backend = init_backend()?;
+    backend.refresh();
+    let count = backend.device_count() as u32;
     if count == 0 {
         bail!("No AMD GPUs detected");
     }
 
     let mut entries = Vec::new();
-
-    for i in 0..count {
-        let raw = is_amd_ffi::amd_smi_collect_device(i);
+    for (i, device) in backend.devices().into_iter().enumerate() {
+        let m = backend.snapshot(i).unwrap_or_default();
         entries.push(GpuListEntry {
-            index: i,
-            name: raw.brand.clone(),
-            uuid: raw.uuid.clone(),
-            temperature_c: raw.temperature_celsius,
-            power_w: raw.power_usage_mw / 1000,
-            power_limit_w: raw.power_limit_mw / 1000,
-            memory_used: if raw.memory_used_bytes > 0 {
-                format_bytes(raw.memory_used_bytes)
-            } else {
-                "N/A".into()
-            },
-            memory_total: if raw.memory_total_bytes > 0 {
-                format_bytes(raw.memory_total_bytes)
-            } else {
-                "N/A".into()
-            },
+            index: i as u32,
+            name: device.model,
+            uuid: device.uuid,
+            temperature_c: m.temperature.map(|t| t as i64).unwrap_or(0),
+            power_w: m.power_usage.map(|w| w as u64).unwrap_or(0),
+            power_limit_w: m.power_limit.map(|w| w as u64).unwrap_or(0),
+            memory_used: m.memory_used.map(format_bytes).unwrap_or_else(|| "N/A".into()),
+            memory_total: m
+                .memory_total
+                .map(format_bytes)
+                .unwrap_or_else(|| "N/A".into()),
         });
     }
 
     match format {
-        OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&entries)?);
-        }
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&entries)?),
         OutputFormat::Text => {
             println!("{}", format!("AMD GPUs detected: {count}").green());
             println!("{}", "─".repeat(80));
@@ -81,26 +69,25 @@ pub fn list_gpus(format: &OutputFormat) -> Result<()> {
             }
         }
     }
-
     Ok(())
 }
 
-// ─── INFO ────────────────────────────────────────────────────────────────────
-
 pub fn gpu_info(index: u32, format: &OutputFormat) -> Result<()> {
-    init_amd()?;
-    let count = is_amd_ffi::amd_smi_get_device_count();
-    if index >= count {
-        bail!("AMD GPU {index} not found (detected {count} devices)");
+    let mut backend = init_backend()?;
+    backend.refresh();
+    if index as usize >= backend.device_count() {
+        bail!(
+            "AMD GPU {index} not found (detected {} devices)",
+            backend.device_count()
+        );
     }
-
-    let raw = is_amd_ffi::amd_smi_collect_device(index);
-    let perf_level = is_amd_ffi::amd_smi_get_perf_level(index);
-    let perf_str = match perf_level {
-        0 => "auto",
-        1 => "low",
-        2 => "high",
-        3 => "manual",
+    let device = backend.devices().into_iter().nth(index as usize).unwrap();
+    let m = backend.snapshot(index as usize).unwrap_or_default();
+    let perf_str = match backend.perf_level(index) {
+        Some(0) => "auto",
+        Some(1) => "low",
+        Some(2) => "high",
+        Some(3) => "manual",
         _ => "unknown",
     };
 
@@ -108,71 +95,66 @@ pub fn gpu_info(index: u32, format: &OutputFormat) -> Result<()> {
         OutputFormat::Json => {
             let info = serde_json::json!({
                 "index": index,
-                "name": raw.brand,
-                "uuid": raw.uuid,
-                "temperature_c": raw.temperature_celsius,
-                "power_usage_mw": raw.power_usage_mw,
-                "power_limit_mw": raw.power_limit_mw,
-                "memory_used_bytes": raw.memory_used_bytes,
-                "memory_total_bytes": raw.memory_total_bytes,
-                "clock_core_mhz": raw.clock_core_mhz,
-                "clock_memory_mhz": raw.clock_memory_mhz,
-                "gpu_utilization_percent": raw.gpu_utilization_percent,
-                "memory_utilization_percent": raw.memory_utilization_percent,
-                "fan_speed_rpm": raw.fan_speed_rpm,
+                "name": device.model,
+                "uuid": device.uuid,
+                "temperature_c": m.temperature,
+                "power_w": m.power_usage,
+                "power_limit_w": m.power_limit,
+                "memory_used_bytes": m.memory_used,
+                "memory_total_bytes": m.memory_total,
+                "clock_graphics_mhz": m.clock_graphics,
+                "clock_memory_mhz": m.clock_memory,
+                "fan_speed_rpm": m.fan_speed,
                 "perf_level": perf_str,
             });
             println!("{}", serde_json::to_string_pretty(&info)?);
         }
         OutputFormat::Text => {
-            println!("{}", format!("GPU {index}: {}", raw.brand).cyan().bold());
-            println!("{}", "─".repeat(50));
-            println!("  UUID:          {}", raw.uuid);
-            println!("  Temperature:   {}°C", raw.temperature_celsius);
             println!(
-                "  Power:         {} / {} W",
-                raw.power_usage_mw / 1000,
-                raw.power_limit_mw / 1000
+                "{}",
+                format!("AMD GPU {index}: {}", device.model).cyan().bold()
             );
-            if raw.memory_total_bytes > 0 {
+            println!("{}", "─".repeat(50));
+            println!("  UUID:          {}", device.uuid);
+            println!("  Temperature:   {}°C", m.temperature.unwrap_or(0.0));
+            println!(
+                "  Power:         {:.0} / {:.0} W",
+                m.power_usage.unwrap_or(0.0),
+                m.power_limit.unwrap_or(0.0)
+            );
+            if let (Some(used), Some(total)) = (m.memory_used, m.memory_total) {
                 println!(
                     "  Memory:        {} / {}",
-                    format_bytes(raw.memory_used_bytes),
-                    format_bytes(raw.memory_total_bytes)
+                    format_bytes(used),
+                    format_bytes(total)
                 );
             }
-            println!("  Core Clock:    {} MHz", raw.clock_core_mhz);
-            println!("  Memory Clock:  {} MHz", raw.clock_memory_mhz);
-            println!("  GPU Util:      {}%", raw.gpu_utilization_percent);
-            println!("  Mem Util:      {}%", raw.memory_utilization_percent);
-            if raw.fan_speed_rpm > 0 {
-                println!("  Fan:           {} RPM", raw.fan_speed_rpm);
+            println!("  Core Clock:    {} MHz", m.clock_graphics.unwrap_or(0));
+            println!("  Memory Clock:  {} MHz", m.clock_memory.unwrap_or(0));
+            if let Some(f) = m.fan_speed {
+                println!("  Fan:           {f} RPM");
             }
             println!("  Perf Level:    {perf_str}");
         }
     }
-
     Ok(())
 }
 
-// ─── SET POWER LIMIT ─────────────────────────────────────────────────────────
-
 pub fn set_power_limit(index: u32, watts: u32) -> Result<()> {
-    init_amd()?;
-    let count = is_amd_ffi::amd_smi_get_device_count();
-    if index >= count {
-        bail!("AMD GPU {index} not found (detected {count} devices)");
-    }
-
-    let milliwatts = watts as u64 * 1000;
-    let ret = is_amd_ffi::amd_smi_set_power_limit(index, milliwatts);
-    if ret != 0 {
+    let backend = init_backend()?;
+    if index as usize >= backend.device_count() {
         bail!(
-            "Failed to set power limit for AMD GPU {index} (error code: {ret}).\n\
-             Do you have root/sudo permissions?"
+            "AMD GPU {index} not found (detected {} devices)",
+            backend.device_count()
         );
     }
-
+    let milliwatts = watts as u64 * 1000;
+    backend.set_power_limit(index, milliwatts).map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to set power limit for AMD GPU {index}: {e}\n\
+             Do you have root/sudo permissions?"
+        )
+    })?;
     println!(
         "{}",
         format!("✓ AMD GPU {index}: Power limit set to {watts}W").green()
@@ -180,41 +162,39 @@ pub fn set_power_limit(index: u32, watts: u32) -> Result<()> {
     Ok(())
 }
 
-// ─── SET PERF LEVEL ──────────────────────────────────────────────────────────
-
 pub fn set_perf(index: u32, level: &PerfLevel) -> Result<()> {
-    init_amd()?;
-    let count = is_amd_ffi::amd_smi_get_device_count();
-    if index >= count {
-        bail!("AMD GPU {index} not found (detected {count} devices)");
+    let backend = init_backend()?;
+    if index as usize >= backend.device_count() {
+        bail!(
+            "AMD GPU {index} not found (detected {} devices)",
+            backend.device_count()
+        );
     }
-
     let level_str = match level {
         PerfLevel::Auto => "auto",
         PerfLevel::Low => "low",
         PerfLevel::High => "high",
     };
-
-    let success = is_amd_ffi::amd_smi_set_perf_level(index, level_str);
-
-    if !success {
-        bail!(
-            "Failed to set performance level for AMD GPU {index}.\n\
+    backend.set_perf_level(index, level_str).map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to set performance level for AMD GPU {index}: {e}\n\
              Do you have root/sudo permissions?"
-        );
-    }
-
+        )
+    })?;
     println!(
         "{}",
-        format!("✓ AMD GPU {index}: Performance set to {}", level_str.to_uppercase()).green()
+        format!(
+            "✓ AMD GPU {index}: Performance set to {}",
+            level_str.to_uppercase()
+        )
+        .green()
     );
     Ok(())
 }
 
 pub fn set_perf_all(level: &PerfLevel) -> Result<()> {
-    init_amd()?;
-    let count = is_amd_ffi::amd_smi_get_device_count();
-    for i in 0..count {
+    let backend = init_backend()?;
+    for i in 0..backend.device_count() as u32 {
         if let Err(e) = set_perf(i, level) {
             eprintln!("{}", format!("✗ AMD GPU {i}: {e}").red());
         }
@@ -222,24 +202,19 @@ pub fn set_perf_all(level: &PerfLevel) -> Result<()> {
     Ok(())
 }
 
-// ─── RESET ───────────────────────────────────────────────────────────────────
-
 pub fn reset_clocks(index: u32) -> Result<()> {
-    init_amd()?;
-    let count = is_amd_ffi::amd_smi_get_device_count();
-    if index >= count {
-        bail!("AMD GPU {index} not found (detected {count} devices)");
-    }
-
-    // Reset by setting perf level to auto
-    let success = is_amd_ffi::amd_smi_set_perf_level(index, "auto");
-
-    if !success {
+    let backend = init_backend()?;
+    if index as usize >= backend.device_count() {
         bail!(
-            "Failed to reset AMD GPU {index}. Do you have root/sudo permissions?"
+            "AMD GPU {index} not found (detected {} devices)",
+            backend.device_count()
         );
     }
-
+    backend.set_perf_level(index, "auto").map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to reset AMD GPU {index}: {e}. Do you have root/sudo permissions?"
+        )
+    })?;
     println!(
         "{}",
         format!("✓ AMD GPU {index}: Reset to defaults (auto perf level)").green()
@@ -248,9 +223,8 @@ pub fn reset_clocks(index: u32) -> Result<()> {
 }
 
 pub fn reset_all() -> Result<()> {
-    init_amd()?;
-    let count = is_amd_ffi::amd_smi_get_device_count();
-    for i in 0..count {
+    let backend = init_backend()?;
+    for i in 0..backend.device_count() as u32 {
         if let Err(e) = reset_clocks(i) {
             eprintln!("{}", format!("✗ AMD GPU {i}: {e}").red());
         }

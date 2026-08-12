@@ -44,6 +44,8 @@ pub struct App {
 
     // --- GPU data ---
     pub gpus: Vec<GpuSnapshot>,
+    /// e.g. `nvidia:1 amd:2`
+    pub backend_summary: String,
     pub driver_version: String,
     pub cuda_version: String,
     pub device_count: u32,
@@ -90,6 +92,7 @@ impl App {
         let gpus = gpu_collector.collect();
         let system = sys_collector.collect();
         let device_count = gpu_collector.device_count;
+        let backend_summary = gpu_collector.backend_summary.clone();
         let driver_version = gpu_collector.driver_version.clone();
         let cuda_version = gpu_collector.cuda_version.clone();
 
@@ -117,6 +120,7 @@ impl App {
             sysinfo,
             gpus,
             system,
+            backend_summary,
             driver_version,
             cuda_version,
             device_count,
@@ -147,6 +151,12 @@ impl App {
     /// Refresh all metrics.
     pub fn tick(&mut self) {
         self.gpus = self.gpu_collector.collect();
+        self.device_count = self.gpus.len() as u32;
+        if self.selected_gpu >= self.gpus.len() && !self.gpus.is_empty() {
+            self.selected_gpu = self.gpus.len() - 1;
+        }
+        self.ensure_gpu_history_len(self.gpus.len());
+
         self.system = self.sys_collector.collect();
         self.tick_count += 1;
 
@@ -222,6 +232,19 @@ impl App {
     pub fn prev_gpu(&mut self) {
         if !self.gpus.is_empty() {
             self.selected_gpu = self.selected_gpu.checked_sub(1).unwrap_or(self.gpus.len() - 1);
+        }
+    }
+
+    fn ensure_gpu_history_len(&mut self, n: usize) {
+        while self.gpu_util_history.len() < n {
+            self.gpu_util_history
+                .push(VecDeque::with_capacity(HISTORY_LEN));
+            self.mem_util_history
+                .push(VecDeque::with_capacity(HISTORY_LEN));
+            self.gpu_temp_history
+                .push(VecDeque::with_capacity(HISTORY_LEN));
+            self.gpu_power_history
+                .push(VecDeque::with_capacity(HISTORY_LEN));
         }
     }
 

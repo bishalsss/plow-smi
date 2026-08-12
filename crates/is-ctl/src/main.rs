@@ -1,17 +1,10 @@
-//! is-ctl — GPU power & clock control CLI.
+//! is-ctl — GPU power & clock control CLI (via is-gpu).
 //!
 //! Usage:
-//!   is-ctl nvidia list                      # List all NVIDIA GPUs
-//!   is-ctl nvidia info 0                    # Detailed info for NVIDIA GPU 0
-//!   is-ctl nvidia set-clocks 0 --mem 2619 --graphics 1785
+//!   is-ctl list                             # All vendors
+//!   is-ctl nvidia list | amd list | intel list
 //!   is-ctl nvidia set-power-limit 0 --watts 300
-//!   is-ctl nvidia set-perf 0 --level high
-//!   is-ctl nvidia reset 0                   # Reset NVIDIA GPU 0 to defaults
-//!   is-ctl amd list                         # List all AMD GPUs
-//!   is-ctl amd info 0                       # Detailed info for AMD GPU 0
-//!   is-ctl amd set-power-limit 0 --watts 200
 //!   is-ctl amd set-perf 0 --level high
-//!   is-ctl amd reset 0
 
 use clap::{Parser, Subcommand};
 use is_ctl::{OutputFormat, PerfLevel};
@@ -20,9 +13,9 @@ use is_ctl::{OutputFormat, PerfLevel};
 #[command(
     name = "is-ctl",
     version,
-    about = "GPU power & clock control CLI for NVIDIA and AMD GPUs",
-    long_about = "Professional GPU management tool. Set clock speeds, power limits, \
-                  and performance levels. Requires root/sudo for most operations."
+    about = "GPU list & control CLI (NVIDIA / AMD / Intel via is-gpu)",
+    long_about = "List GPUs across vendors and control NVIDIA/AMD power & clocks. \
+                  Requires root/sudo for most set operations."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -31,6 +24,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// List every GPU discovered (NVIDIA + AMD + Intel)
+    List {
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
+    },
+
     /// NVIDIA GPU control operations
     #[command(subcommand)]
     Nvidia(NvidiaCommands),
@@ -38,6 +37,10 @@ enum Commands {
     /// AMD GPU control operations
     #[command(subcommand)]
     Amd(AmdCommands),
+
+    /// Intel GPU info (metrics; Level Zero)
+    #[command(subcommand)]
+    Intel(IntelCommands),
 }
 
 #[derive(Subcommand)]
@@ -162,6 +165,22 @@ enum AmdCommands {
     },
 }
 
+#[derive(Subcommand)]
+enum IntelCommands {
+    /// List all detected Intel GPUs
+    List {
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
+    },
+
+    /// Show detailed info for a specific GPU
+    Info {
+        gpu: u32,
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
+    },
+}
+
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -173,19 +192,25 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::List { format } => is_ctl::list::list_all(&format),
         Commands::Nvidia(cmd) => run_nvidia(cmd),
         Commands::Amd(cmd) => run_amd(cmd),
+        Commands::Intel(cmd) => run_intel(cmd),
     }
 }
 
-#[cfg(feature = "nvidia")]
 fn run_nvidia(cmd: NvidiaCommands) -> anyhow::Result<()> {
     use is_ctl::nvidia;
 
     match cmd {
         NvidiaCommands::List { format } => nvidia::list_gpus(&format),
         NvidiaCommands::Info { gpu, format } => nvidia::gpu_info(gpu, &format),
-        NvidiaCommands::SetClocks { gpu, mem, graphics, all } => {
+        NvidiaCommands::SetClocks {
+            gpu,
+            mem,
+            graphics,
+            all,
+        } => {
             if all {
                 nvidia::set_clocks_all(mem, graphics)
             } else {
@@ -214,11 +239,6 @@ fn run_nvidia(cmd: NvidiaCommands) -> anyhow::Result<()> {
     }
 }
 
-#[cfg(not(feature = "nvidia"))]
-fn run_nvidia(_cmd: NvidiaCommands) -> anyhow::Result<()> {
-    anyhow::bail!("NVIDIA support not compiled. Rebuild with --features nvidia")
-}
-
 fn run_amd(cmd: AmdCommands) -> anyhow::Result<()> {
     use is_ctl::amd;
 
@@ -242,5 +262,13 @@ fn run_amd(cmd: AmdCommands) -> anyhow::Result<()> {
                 amd::reset_clocks(idx)
             }
         }
+    }
+}
+
+fn run_intel(cmd: IntelCommands) -> anyhow::Result<()> {
+    use is_ctl::intel;
+    match cmd {
+        IntelCommands::List { format } => intel::list_gpus(&format),
+        IntelCommands::Info { gpu, format } => intel::gpu_info(gpu, &format),
     }
 }

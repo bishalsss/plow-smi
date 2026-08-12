@@ -3,7 +3,7 @@
 //! Usage:
 //!   is-exporter --all                    # Enable all collectors
 //!   is-exporter --nvidia --system        # NVIDIA + system only
-//!   is-exporter --amd --port 9100        # AMD on custom port
+//!   is-exporter --amd --intel --port 9100
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -50,7 +50,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Validate configuration
     if config.no_collectors_enabled() {
-        warn!("No collectors enabled! Use --nvidia, --amd, --system, or --all");
+        warn!("No collectors enabled! Use --nvidia, --amd, --intel, --system, --tpu, or --all");
         warn!("Run with --help for usage information");
         info!("Defaulting to --all");
     }
@@ -58,23 +58,21 @@ async fn main() -> anyhow::Result<()> {
     // Build collector manager
     let mut manager = CollectorManager::new();
 
-    // Register NVIDIA collector
-    #[cfg(feature = "nvidia")]
-    if config.nvidia_enabled() || config.no_collectors_enabled() {
-        info!("Registering NVIDIA collector...");
-        let nvidia = collector::nvidia::NvidiaCollector::new();
-        if let Err(e) = manager.register(Box::new(nvidia)).await {
-            warn!(error = %e, "NVIDIA collector failed to initialize (continuing without it)");
-        }
-    }
-
-    // Register AMD collector
-    #[cfg(feature = "amd")]
-    if config.amd_enabled() || config.no_collectors_enabled() {
-        info!("Registering AMD collector...");
-        let amd = collector::amd::AmdCollector::new();
-        if let Err(e) = manager.register(Box::new(amd)).await {
-            warn!(error = %e, "AMD collector failed to initialize (continuing without it)");
+    // Register unified GPU collector (is-gpu: NVIDIA / AMD / Intel)
+    #[cfg(feature = "gpu")]
+    {
+        let default_all = config.no_collectors_enabled();
+        let filter = collector::gpu::VendorFilter {
+            nvidia: config.nvidia_enabled() || default_all,
+            amd: config.amd_enabled() || default_all,
+            intel: config.intel_enabled() || default_all,
+        };
+        if filter.nvidia || filter.amd || filter.intel {
+            info!("Registering is-gpu collector (nvidia={} amd={} intel={})", filter.nvidia, filter.amd, filter.intel);
+            let gpu = collector::gpu::GpuCollector::new(filter);
+            if let Err(e) = manager.register(Box::new(gpu)).await {
+                warn!(error = %e, "GPU collector failed to initialize (continuing without it)");
+            }
         }
     }
 
@@ -162,10 +160,6 @@ async fn main() -> anyhow::Result<()> {
         })?;
 
     info!("Shutting down gracefully...");
-
-    // Cleanup AMD SMI if initialized
-    #[cfg(feature = "amd")]
-    is_amd_ffi::amd_smi_shutdown();
 
     Ok(())
 }

@@ -1,54 +1,56 @@
-//! GPU data collection — delegates to is-exporter's collectors.
+//! GPU data collection — multi-vendor via is-exporter's is-gpu collector.
 
+use is_exporter::collector::gpu::{GpuCollector as ExporterGpuCollector, VendorFilter};
 use is_exporter::collector::{Collector, GpuSnapshot};
-use is_exporter::collector::nvidia::NvidiaCollector;
-use is_nvidia::GpuProcessInfo;
+use is_gpu::GpuProcessInfo;
 
-/// GPU collector wrapping the exporter's NvidiaCollector.
+/// GPU collector wrapping the exporter's unified `is-gpu` collector.
 pub struct GpuCollector {
-    nvidia: NvidiaCollector,
+    inner: ExporterGpuCollector,
     pub device_count: u32,
+    /// Human-readable backend mix, e.g. `nvidia:1 amd:2`.
+    pub backend_summary: String,
     pub driver_version: String,
     pub cuda_version: String,
     initialized: bool,
 }
 
 impl GpuCollector {
-    /// Initialize GPU collection by delegating to the exporter's collector.
+    /// Initialize GPU collection for every vendor `is-gpu` can discover.
     pub fn new() -> Self {
-        let mut nvidia = NvidiaCollector::new();
+        let mut inner = ExporterGpuCollector::new(VendorFilter::all());
 
-        // Use tokio runtime to call async init
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .expect("Failed to create tokio runtime");
 
-        let (initialized, device_count) = match rt.block_on(nvidia.init()) {
+        let (initialized, device_count) = match rt.block_on(inner.init()) {
             Ok(count) => (true, count as u32),
             Err(_) => (false, 0),
         };
 
-        // Get driver/CUDA info from the exporter's public methods
-        let (driver_version, cuda_version) = if initialized {
+        let (backend_summary, driver_version, cuda_version) = if initialized {
             (
-                nvidia.driver_version().unwrap_or_else(|| "N/A".into()),
-                nvidia.cuda_version().unwrap_or_else(|| "N/A".into()),
+                inner.backend_summary(),
+                inner.driver_version().unwrap_or_else(|| "N/A".into()),
+                inner.cuda_version().unwrap_or_else(|| "N/A".into()),
             )
         } else {
-            ("N/A".into(), "N/A".into())
+            (String::new(), "N/A".into(), "N/A".into())
         };
 
         Self {
-            nvidia,
+            inner,
             device_count,
+            backend_summary,
             driver_version,
             cuda_version,
             initialized,
         }
     }
 
-    /// Collect current GPU metrics using the exporter's collector.
+    /// Collect current GPU metrics (NVIDIA + AMD + Intel as available).
     pub fn collect(&self) -> Vec<GpuSnapshot> {
         if !self.initialized {
             return Vec::new();
@@ -59,14 +61,14 @@ impl GpuCollector {
             .build()
             .expect("Failed to create tokio runtime");
 
-        rt.block_on(self.nvidia.collect()).unwrap_or_default()
+        rt.block_on(self.inner.collect()).unwrap_or_default()
     }
 
-    /// Collect GPU processes from NVML.
+    /// Collect GPU processes (NVML when available).
     pub fn collect_processes(&self) -> Vec<GpuProcessInfo> {
         if !self.initialized {
             return Vec::new();
         }
-        self.nvidia.collect_gpu_processes()
+        self.inner.collect_gpu_processes()
     }
 }

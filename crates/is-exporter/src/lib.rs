@@ -1,7 +1,8 @@
 //! GPU Exporter Library
 //!
-//! Professional GPU metrics exporter supporting AMD (via ROCm SMI),
-//! NVIDIA (via NVML), and system-level metrics, exposed as Prometheus metrics.
+//! Professional GPU metrics exporter supporting NVIDIA, AMD, and Intel via
+//! `is-gpu` (runtime dlopen), plus optional system and TPU metrics, exposed as
+//! Prometheus metrics.
 
 pub mod collector;
 pub mod config;

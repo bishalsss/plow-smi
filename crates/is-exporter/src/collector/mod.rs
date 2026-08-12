@@ -2,11 +2,8 @@
 
 pub mod manager;
 
-#[cfg(feature = "nvidia")]
-pub mod nvidia;
-
-#[cfg(feature = "amd")]
-pub mod amd;
+#[cfg(feature = "gpu")]
+pub mod gpu;
 
 #[cfg(feature = "system")]
 pub mod system;
@@ -23,7 +20,7 @@ use crate::error::Result;
 pub struct GpuSnapshot {
     /// Device index (0-based).
     pub index: u32,
-    /// Vendor identifier ("nvidia" or "amd").
+    /// Vendor identifier (`"nvidia"`, `"amd"`, or `"intel"`).
     pub vendor: &'static str,
     /// Hostname of this machine.
     pub hostname: String,
@@ -82,7 +79,7 @@ impl GpuSnapshot {
 /// Trait that all metric collectors must implement.
 #[async_trait]
 pub trait Collector: Send + Sync {
-    /// Human-readable name of this collector (e.g., "nvidia", "amd", "system").
+    /// Human-readable name of this collector (e.g., "gpu", "system").
     fn name(&self) -> &'static str;
 
     /// Initialize the collector, detecting available devices.

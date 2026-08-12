@@ -190,7 +190,20 @@ fn draw_header_bar(frame: &mut Frame, app: &App, area: Rect) {
         ),
         Span::styled(" │ ", Style::default().fg(DARK_GRAY)),
         Span::styled(
-            format!("Driver {} ", app.driver_version),
+            if app.backend_summary.is_empty() {
+                "no backends".into()
+            } else {
+                app.backend_summary.clone()
+            },
+            Style::default().fg(GREEN),
+        ),
+        Span::styled(" │ ", Style::default().fg(DARK_GRAY)),
+        Span::styled(
+            if app.driver_version != "N/A" {
+                format!("NV {}", app.driver_version)
+            } else {
+                String::new()
+            },
             Style::default().fg(DARK_GRAY),
         ),
         Span::styled(" │ ", Style::default().fg(DARK_GRAY)),
@@ -504,6 +517,7 @@ fn draw_gpu_row(frame: &mut Frame, app: &App, gpu: &is_exporter::collector::GpuS
     let power_limit_w = gpu.power_limit_mw.unwrap_or(1) / 1000;
     let fan = gpu.fan_speed;
     let selected_marker = if idx == app.selected_gpu { "▶" } else { " " };
+    let vendor_tag = format!("[{}]", gpu.vendor.to_uppercase());
 
     // Row 1: GPU name + key stats
     let name_line = Line::from(vec![
@@ -513,9 +527,19 @@ fn draw_gpu_row(frame: &mut Frame, app: &App, gpu: &is_exporter::collector::GpuS
                 .fg(if idx == app.selected_gpu { CYAN } else { WHITE })
                 .bold(),
         ),
+        Span::styled(" ", Style::default()),
+        Span::styled(
+            vendor_tag,
+            Style::default().fg(match gpu.vendor {
+                "nvidia" => GREEN,
+                "amd" => RED,
+                "intel" => BLUE,
+                _ => GRAY,
+            }),
+        ),
         Span::styled(" │ ", Style::default().fg(DARK_GRAY)),
         Span::styled(
-            truncate_str(&gpu.brand, 28),
+            truncate_str(&gpu.brand, 24),
             Style::default().fg(WHITE),
         ),
         Span::styled(" │ ", Style::default().fg(DARK_GRAY)),
@@ -530,6 +554,9 @@ fn draw_gpu_row(frame: &mut Frame, app: &App, gpu: &is_exporter::collector::GpuS
         ),
         Span::styled(" │ ", Style::default().fg(DARK_GRAY)),
         match fan {
+            Some(f) if gpu.vendor == "amd" => {
+                Span::styled(format!("Fan:{f}rpm"), Style::default().fg(CYAN))
+            }
             Some(f) => Span::styled(format!("Fan:{f}%"), Style::default().fg(CYAN)),
             None => Span::styled("Fan:N/A", Style::default().fg(DARK_GRAY)),
         },
@@ -744,7 +771,7 @@ fn draw_gpu_selector(frame: &mut Frame, app: &App, area: Rect) {
         .enumerate()
         .map(|(i, g)| {
             let temp = g.temperature_celsius.unwrap_or(0);
-            Line::from(format!(" GPU{i} {temp}°C "))
+            Line::from(format!(" GPU{i} [{}] {temp}°C ", g.vendor))
         })
         .collect();
 
@@ -820,7 +847,7 @@ fn draw_gpu_metrics(frame: &mut Frame, gpu: &is_exporter::collector::GpuSnapshot
         .borders(Borders::ALL)
         .border_style(Style::default().fg(DARK_GRAY))
         .title(Span::styled(
-            format!(" GPU {} ", gpu.index),
+            format!(" GPU {} [{}] ", gpu.index, gpu.vendor),
             Style::default().fg(MAGENTA).bold(),
         ));
 
