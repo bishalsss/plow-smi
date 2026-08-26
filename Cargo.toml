@@ -1,18 +1,19 @@
 [workspace]
 members = [
-    "crates/is-gpu",
-    "crates/is-exporter",
-    "crates/is-top",
-    "crates/is-ctl",
-    "crates/is-cli",
+    "crates/plows-gpu",
+    "crates/plows-exporter",
+    "crates/plows-top",
+    "crates/plows-ctl",
+    "crates/plows-cli",
 ]
 resolver = "2"
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-authors = ["storyvis <shaswot@storyvis.co>"]
-repository = "https://github.com/infervisor/infersight"
+authors = ["Shaswot Paudel <shaswot@infervisor.ai>"]
+repository = "https://github.com/infervisor/plow-smi"
+license = "Apache-2.0"
 
 [workspace.dependencies]
 # Shared dependencies across workspace
