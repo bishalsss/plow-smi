@@ -1,0 +1,19 @@
+[package]
+name = "plows-gpu"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Cross-platform GPU metrics via runtime dlopen of NVML, AMD SMI, and Level Zero — no compile-time GPU SDKs"
+license.workspace = true
+readme = "README.md"
+keywords = ["gpu", "metrics", "nvml", "rocm", "level-zero"]
+categories = ["hardware-support", "api-bindings"]
+
+[dependencies]
+libloading = "0.8"
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tracing-subscriber = { workspace = true }

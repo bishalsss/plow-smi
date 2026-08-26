@@ -1,54 +1,74 @@
-# InferSight
+# Plow SMI
+
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/Rust-2021-orange.svg?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![Nix](https://img.shields.io/badge/Nix-flakes-5277C3.svg?logo=nixos&logoColor=white)](https://nixos.org/)
+[![Infervisor](https://img.shields.io/badge/by-Infervisor-111111.svg)](https://infervisor.ai)
 
 Production-grade GPU observability and control for heterogeneous compute — NVIDIA, AMD, and Intel — from one Rust workspace.
 
 **No compile-time GPU SDKs.** Vendor libraries (`libnvidia-ml`, `libamd_smi`, `libze_loader`) are loaded at runtime with `dlopen`. One binary works on CPU-only hosts and enables GPUs automatically when drivers are present.
 
+![plows-top demo](assets/plows-top-demo.gif)
+
 ## Crates
 
 | Crate | Role |
 |-------|------|
-| **is-gpu** | Shared GPU layer: discover backends, metrics, processes, power/clock control |
-| **is-exporter** | Prometheus `/metrics` HTTP server |
-| **is-top** | Interactive TUI (htop for GPUs) |
-| **is-ctl** | List / info / set power & clocks |
-| **is-cli** | Unified `infersight` binary (`export`, `top`, `ctl`) |
+| **plows-gpu** | Shared GPU layer: discover backends, metrics, processes, power/clock control |
+| **plows-exporter** | Prometheus `/metrics` HTTP server |
+| **plows-top** | Interactive TUI (htop for GPUs) |
+| **plows-ctl** | List / info / set power & clocks |
+| **plows-cli** | Unified `plow-smi` binary (`export`, `top`, `ctl`) |
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the design.
 
 ## Quick start
 
 ```bash
-git clone https://github.com/infervisor/infersight.git
-cd infersight
+git clone https://github.com/infervisor/plow-smi.git
+cd plow-smi
 cargo build --release
 ```
 
 ```bash
 # Prometheus exporter
-./target/release/is-exporter --all
+./target/release/plows-exporter --all
 # → http://0.0.0.0:9835/metrics
 
 # Terminal monitor
-./target/release/is-top
+./target/release/plows-top
 
 # Control
-./target/release/is-ctl nvidia list
-./target/release/is-ctl amd list
+./target/release/plows-ctl nvidia list
+./target/release/plows-ctl amd list
 
 # Unified CLI
-./target/release/infersight export --all
-./target/release/infersight top
-./target/release/infersight ctl nvidia-list
+./target/release/plow-smi export --all
+./target/release/plow-smi top
+./target/release/plow-smi ctl nvidia-list
 ```
 
 Dev:
 
 ```bash
-cargo run -p is-gpu --example discover
-cargo run -p is-exporter -- --nvidia --system
-cargo test -p is-gpu
+cargo run -p plows-gpu --example discover
+cargo run -p plows-exporter -- --nvidia --system
+cargo test -p plows-gpu
 ```
+
+Or via [Nix](https://nixos.org/) flakes — every binary builds and runs individually:
+
+```bash
+nix build                # unified plow-smi CLI (default package)
+nix build .#plows-exporter
+nix build .#all          # every binary in one derivation
+nix run .#plows-top
+nix flake check          # build + test every package
+```
+
+A NixOS module for running the exporter as a systemd service is available at
+`nixosModules.default` (`services.plow-smi-exporter`).
 
 ## Requirements
 
@@ -70,6 +90,22 @@ Missing vendors are logged and skipped — never crash the process.
 - Power limits / clocks / perf levels (NVIDIA + AMD; needs privileges)
 - Structured logging via `tracing`
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Please follow the
+[Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Security
+
+Report vulnerabilities privately — see [SECURITY.md](SECURITY.md).
+
 ## License
 
-Licensed under Apache-2.0 or MIT, at your option.
+Copyright 2025 Shaswot Paudel.
+
+Licensed under the [Apache License, Version 2.0](LICENSE).
+
+## Code of Conduct
+
+This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md).
+Report unacceptable behavior to **shaswot@infervisor.ai**.
