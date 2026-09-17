@@ -293,7 +293,7 @@ impl NvmlApi {
     }
 
     pub fn device_name(&self, device: NvmlDevice) -> Option<String> {
-        let mut buf = [0i8; 96];
+        let mut buf = [0 as c_char; 96];
         let st = unsafe {
             (self.nvml_device_get_name)(device, buf.as_mut_ptr(), buf.len() as c_uint)
         };
@@ -307,7 +307,7 @@ impl NvmlApi {
     }
 
     pub fn device_uuid(&self, device: NvmlDevice) -> Option<String> {
-        let mut buf = [0i8; 96];
+        let mut buf = [0 as c_char; 96];
         let st = unsafe {
             (self.nvml_device_get_uuid)(device, buf.as_mut_ptr(), buf.len() as c_uint)
         };
@@ -321,7 +321,7 @@ impl NvmlApi {
     }
 
     pub fn device_serial(&self, device: NvmlDevice) -> Option<String> {
-        let mut buf = [0i8; 96];
+        let mut buf = [0 as c_char; 96];
         let st = unsafe {
             (self.nvml_device_get_serial)(device, buf.as_mut_ptr(), buf.len() as c_uint)
         };
@@ -448,7 +448,7 @@ impl NvmlApi {
     /// NVIDIA driver version string.
     pub fn driver_version(&self) -> Option<String> {
         let f = self.nvml_system_get_driver_version?;
-        let mut buf = [0i8; 80];
+        let mut buf = [0 as c_char; 80];
         let st = unsafe { f(buf.as_mut_ptr(), buf.len() as c_uint) };
         if st == NVML_SUCCESS {
             Some(c_string_from_buf(unsafe {
