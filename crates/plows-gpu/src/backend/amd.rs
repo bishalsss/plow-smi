@@ -76,6 +76,10 @@ impl GpuBackend for AmdBackend {
         self.slots.len()
     }
 
+    fn driver_version(&self) -> Option<String> {
+        self.slots.first().and_then(|s| self.api.driver_version(s.handle))
+    }
+
     fn devices(&self) -> Vec<GpuDevice> {
         self.slots.iter().map(|s| s.identity.clone()).collect()
     }
@@ -176,6 +180,27 @@ impl AmdBackend {
             }
         };
         self.api.set_perf_level(h, code)
+    }
+
+    /// Current, default, min and max power limits.
+    ///
+    /// A zero from AMD SMI means "not reported" and becomes `None`, except
+    /// for the minimum, where zero is a real value some boards report.
+    pub fn power_limits(&self, index: u32) -> Result<crate::PowerLimits> {
+        let h = self.handle_at(index)?;
+        let nz = |uw: u64| (uw > 0).then_some(uw / 1000);
+        Ok(match self.api.power_cap_info_uw(h) {
+            Some((cur, def, min, max)) => crate::PowerLimits {
+                current_mw: nz(cur),
+                default_mw: nz(def),
+                min_mw: (max > 0).then_some(min / 1000),
+                max_mw: nz(max),
+            },
+            None => crate::PowerLimits {
+                current_mw: self.api.power_limit_watts(h).map(|w| w as u64 * 1000),
+                ..Default::default()
+            },
+        })
     }
 
     /// Set power limit in milliwatts.

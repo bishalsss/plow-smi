@@ -1,10 +1,13 @@
 //! AMD GPU control via `plows-gpu` (runtime AMD SMI).
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use colored::Colorize;
 use plows_gpu::{AmdBackend, GpuBackend};
 
-use crate::{format_bytes, GpuListEntry, OutputFormat, PerfLevel};
+use crate::outcome::{Outcome, Status};
+use crate::{
+    emit, emit_all, failed, format_bytes, text_line, GpuListEntry, OutputFormat, PerfLevel,
+};
 
 fn init_backend() -> Result<AmdBackend> {
     AmdBackend::try_load().map_err(|e| {
@@ -34,7 +37,10 @@ pub fn list_gpus(format: &OutputFormat) -> Result<()> {
             temperature_c: m.temperature.map(|t| t as i64).unwrap_or(0),
             power_w: m.power_usage.map(|w| w as u64).unwrap_or(0),
             power_limit_w: m.power_limit.map(|w| w as u64).unwrap_or(0),
-            memory_used: m.memory_used.map(format_bytes).unwrap_or_else(|| "N/A".into()),
+            memory_used: m
+                .memory_used
+                .map(format_bytes)
+                .unwrap_or_else(|| "N/A".into()),
             memory_total: m
                 .memory_total
                 .map(format_bytes)
@@ -140,95 +146,160 @@ pub fn gpu_info(index: u32, format: &OutputFormat) -> Result<()> {
     Ok(())
 }
 
-pub fn set_power_limit(index: u32, watts: u32) -> Result<()> {
-    let backend = init_backend()?;
+fn check_index(backend: &AmdBackend, index: u32) -> Result<()> {
     if index as usize >= backend.device_count() {
         bail!(
             "AMD GPU {index} not found (detected {} devices)",
             backend.device_count()
         );
     }
+    Ok(())
+}
+
+fn perf_name(code: Option<u32>) -> Option<&'static str> {
+    match code {
+        Some(0) => Some("auto"),
+        Some(1) => Some("low"),
+        Some(2) => Some("high"),
+        Some(3) => Some("manual"),
+        _ => None,
+    }
+}
+
+fn current_watts(backend: &AmdBackend, index: u32) -> Option<serde_json::Value> {
+    let mw = backend.power_limits(index).ok()?.current_mw?;
+    Some(serde_json::json!(mw / 1000))
+}
+
+fn power_limit_outcome(backend: &AmdBackend, index: u32, watts: u32) -> Result<Outcome> {
+    check_index(backend, index)?;
+    let limits = backend.power_limits(index).unwrap_or_default();
     let milliwatts = watts as u64 * 1000;
+    // A zero cap is never meaningful; outside min/max the driver would refuse.
+    let lo = limits.min_mw.unwrap_or(0).max(1);
+    if milliwatts < lo || limits.max_mw.is_some_and(|hi| milliwatts > hi) {
+        bail!(
+            "Power limit {watts}W out of range. Valid: {} - {} W",
+            lo.div_ceil(1000),
+            limits
+                .max_mw
+                .map_or("?".to_string(), |m| (m / 1000).to_string())
+        );
+    }
+    let before = current_watts(backend, index);
     backend.set_power_limit(index, milliwatts).map_err(|e| {
         anyhow::anyhow!(
             "Failed to set power limit for AMD GPU {index}: {e}\n\
              Do you have root/sudo permissions?"
         )
     })?;
-    println!(
-        "{}",
-        format!("✓ AMD GPU {index}: Power limit set to {watts}W").green()
-    );
-    Ok(())
+    let mut o = Outcome::new(format!("gpu{index}"), "power_limit_w", watts)
+        .from_value(before)
+        .with(Status::Applied, None);
+    o.actual = current_watts(backend, index);
+    Ok(o)
 }
 
-pub fn set_perf(index: u32, level: &PerfLevel) -> Result<()> {
+pub fn set_power_limit(index: u32, watts: u32, format: &OutputFormat) -> Result<Outcome> {
     let backend = init_backend()?;
-    if index as usize >= backend.device_count() {
-        bail!(
-            "AMD GPU {index} not found (detected {} devices)",
-            backend.device_count()
-        );
-    }
-    let level_str = match level {
-        PerfLevel::Auto => "auto",
-        PerfLevel::Low => "low",
-        PerfLevel::High => "high",
-    };
+    let o = power_limit_outcome(&backend, index, watts)?;
+    emit(
+        format,
+        &o,
+        format!("✓ AMD GPU {index}: Power limit set to {watts}W"),
+    )?;
+    Ok(o)
+}
+
+fn perf_outcome(backend: &AmdBackend, index: u32, level_str: &str) -> Result<Outcome> {
+    check_index(backend, index)?;
+    let before = perf_name(backend.perf_level(index));
     backend.set_perf_level(index, level_str).map_err(|e| {
         anyhow::anyhow!(
             "Failed to set performance level for AMD GPU {index}: {e}\n\
              Do you have root/sudo permissions?"
         )
     })?;
-    println!(
-        "{}",
-        format!(
-            "✓ AMD GPU {index}: Performance set to {}",
-            level_str.to_uppercase()
-        )
-        .green()
-    );
-    Ok(())
+    let mut o = Outcome::new(format!("gpu{index}"), "perf_level", level_str)
+        .from_value(before.map(Into::into))
+        .with(Status::Applied, None);
+    o.actual = perf_name(backend.perf_level(index)).map(Into::into);
+    Ok(o)
 }
 
-pub fn set_perf_all(level: &PerfLevel) -> Result<()> {
+fn level_str(level: &PerfLevel) -> &'static str {
+    match level {
+        PerfLevel::Auto => "auto",
+        PerfLevel::Low => "low",
+        PerfLevel::High => "high",
+    }
+}
+
+pub fn set_perf(index: u32, level: &PerfLevel, format: &OutputFormat) -> Result<Outcome> {
     let backend = init_backend()?;
+    let l = level_str(level);
+    let o = perf_outcome(&backend, index, l)?;
+    emit(
+        format,
+        &o,
+        format!("✓ AMD GPU {index}: Performance set to {}", l.to_uppercase()),
+    )?;
+    Ok(o)
+}
+
+pub fn set_perf_all(level: &PerfLevel, format: &OutputFormat) -> Result<Vec<Outcome>> {
+    let backend = init_backend()?;
+    let l = level_str(level);
+    let mut out = Vec::new();
     for i in 0..backend.device_count() as u32 {
-        if let Err(e) = set_perf(i, level) {
-            eprintln!("{}", format!("✗ AMD GPU {i}: {e}").red());
+        match perf_outcome(&backend, i, l) {
+            Ok(o) => {
+                text_line(
+                    format,
+                    format!("✓ AMD GPU {i}: Performance set to {}", l.to_uppercase()),
+                );
+                out.push(o);
+            }
+            Err(e) => {
+                eprintln!("{}", format!("✗ AMD GPU {i}: {e}").red());
+                out.push(failed(i, "perf_level", l, &e));
+            }
         }
     }
-    Ok(())
+    emit_all(format, &out)?;
+    Ok(out)
 }
 
-pub fn reset_clocks(index: u32) -> Result<()> {
+pub fn reset_clocks(index: u32, format: &OutputFormat) -> Result<Outcome> {
     let backend = init_backend()?;
-    if index as usize >= backend.device_count() {
-        bail!(
-            "AMD GPU {index} not found (detected {} devices)",
-            backend.device_count()
-        );
-    }
-    backend.set_perf_level(index, "auto").map_err(|e| {
-        anyhow::anyhow!(
-            "Failed to reset AMD GPU {index}: {e}. Do you have root/sudo permissions?"
-        )
-    })?;
-    println!(
-        "{}",
-        format!("✓ AMD GPU {index}: Reset to defaults (auto perf level)").green()
-    );
-    Ok(())
+    let o = perf_outcome(&backend, index, "auto")?;
+    emit(
+        format,
+        &o,
+        format!("✓ AMD GPU {index}: Reset to defaults (auto perf level)"),
+    )?;
+    Ok(o)
 }
 
-pub fn reset_all() -> Result<()> {
+pub fn reset_all(format: &OutputFormat) -> Result<Vec<Outcome>> {
     let backend = init_backend()?;
+    let mut out = Vec::new();
     for i in 0..backend.device_count() as u32 {
-        if let Err(e) = reset_clocks(i) {
-            eprintln!("{}", format!("✗ AMD GPU {i}: {e}").red());
+        match perf_outcome(&backend, i, "auto") {
+            Ok(o) => {
+                text_line(
+                    format,
+                    format!("✓ AMD GPU {i}: Reset to defaults (auto perf level)"),
+                );
+                out.push(o);
+            }
+            Err(e) => {
+                eprintln!("{}", format!("✗ AMD GPU {i}: {e}").red());
+                out.push(failed(i, "perf_level", "auto", &e));
+            }
         }
     }
-    println!("{}", "✓ All AMD GPUs reset to defaults".green());
-    Ok(())
+    text_line(format, "✓ All AMD GPUs reset to defaults".to_string());
+    emit_all(format, &out)?;
+    Ok(out)
 }

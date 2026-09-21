@@ -4,12 +4,22 @@
 //! library by `plows-cli` or as the standalone `plows-ctl` binary.
 
 pub mod amd;
+pub mod apply;
+pub mod caps;
+pub mod cpu;
 pub mod intel;
 pub mod list;
 pub mod nvidia;
+pub mod outcome;
+pub mod profile;
+pub mod report;
+pub mod system;
 
 use clap::ValueEnum;
+use colored::Colorize;
 use serde::Serialize;
+
+use outcome::{Outcome, Status};
 
 /// Output format for CLI commands.
 #[derive(Clone, Debug, ValueEnum)]
@@ -48,4 +58,39 @@ pub struct GpuListEntry {
     pub power_limit_w: u64,
     pub memory_used: String,
     pub memory_total: String,
+}
+
+/// Print one outcome: the human line for `text`, the outcome for `json`.
+pub fn emit(format: &OutputFormat, outcome: &Outcome, text: String) -> anyhow::Result<()> {
+    match format {
+        OutputFormat::Text => println!("{}", text.green()),
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(outcome)?),
+    }
+    Ok(())
+}
+
+/// For `--all` commands: text lines are printed as each GPU finishes; JSON is
+/// one array at the end, so stdout is a single document.
+pub fn emit_all(format: &OutputFormat, outcomes: &[Outcome]) -> anyhow::Result<()> {
+    if let OutputFormat::Json = format {
+        println!("{}", serde_json::to_string_pretty(outcomes)?);
+    }
+    Ok(())
+}
+
+/// A green line in text mode; nothing in JSON mode.
+pub fn text_line(format: &OutputFormat, text: String) {
+    if let OutputFormat::Text = format {
+        println!("{}", text.green());
+    }
+}
+
+/// The outcome for a GPU whose write failed.
+pub fn failed(
+    index: u32,
+    setting: &str,
+    to: impl Into<serde_json::Value>,
+    err: &anyhow::Error,
+) -> Outcome {
+    Outcome::new(format!("gpu{index}"), setting, to).with(Status::Failed, Some(err.to_string()))
 }

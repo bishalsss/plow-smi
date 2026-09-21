@@ -207,6 +207,33 @@ impl NvidiaBackend {
         })
     }
 
+    /// Current, default, min and max power limits.
+    pub fn power_limits(&self, index: u32) -> Result<crate::PowerLimits> {
+        let h = self.device_at(index)?;
+        let (min, max) = self
+            .api
+            .power_limit_constraints_mw(h)
+            .map_or((None, None), |(a, b)| (Some(a as u64), Some(b as u64)));
+        Ok(crate::PowerLimits {
+            current_mw: self.api.power_management_limit_mw(h).map(u64::from),
+            default_mw: self.api.power_management_default_limit_mw(h).map(u64::from),
+            min_mw: min,
+            max_mw: max,
+        })
+    }
+
+    /// Application clocks `(memory, graphics)` in MHz, when NVML reports them.
+    pub fn applications_clocks(&self, index: u32) -> Option<(u32, u32)> {
+        let h = self.device_at(index).ok()?;
+        self.api.applications_clocks_mhz(h)
+    }
+
+    /// Persistence mode, when NVML reports it.
+    pub fn persistence_mode(&self, index: u32) -> Option<bool> {
+        let h = self.device_at(index).ok()?;
+        self.api.persistence_mode(h)
+    }
+
     /// Set power limit in milliwatts.
     pub fn set_power_limit(&self, index: u32, milliwatts: u32) -> Result<()> {
         let h = self.device_at(index)?;
