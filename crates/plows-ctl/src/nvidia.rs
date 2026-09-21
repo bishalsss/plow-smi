@@ -1,10 +1,13 @@
 //! NVIDIA GPU control via `plows-gpu` (runtime NVML).
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use colored::Colorize;
 use plows_gpu::{GpuBackend, NvidiaBackend};
 
-use crate::{format_bytes, GpuListEntry, OutputFormat, PerfLevel};
+use crate::outcome::{Outcome, Status};
+use crate::{
+    emit, emit_all, failed, format_bytes, text_line, GpuListEntry, OutputFormat, PerfLevel,
+};
 
 fn init_backend() -> Result<NvidiaBackend> {
     NvidiaBackend::try_load().map_err(|e| {
@@ -148,8 +151,21 @@ pub fn gpu_info(index: u32, format: &OutputFormat) -> Result<()> {
     Ok(())
 }
 
-pub fn set_clocks(index: u32, mem_clk: u32, graphics_clk: u32) -> Result<()> {
-    let backend = init_backend()?;
+fn clocks_value(clocks: Option<(u32, u32)>) -> Option<serde_json::Value> {
+    clocks.map(|(mem, gfx)| serde_json::json!({ "memory_mhz": mem, "graphics_mhz": gfx }))
+}
+
+fn current_watts(backend: &NvidiaBackend, index: u32) -> Option<serde_json::Value> {
+    let mw = backend.power_limits(index).ok()?.current_mw?;
+    Some(serde_json::json!(mw / 1000))
+}
+
+fn clocks_outcome(
+    backend: &NvidiaBackend,
+    index: u32,
+    mem_clk: u32,
+    graphics_clk: u32,
+) -> Result<Outcome> {
     let supported_mem = backend
         .supported_memory_clocks(index)
         .context("Failed to query supported memory clocks")?;
@@ -170,28 +186,71 @@ pub fn set_clocks(index: u32, mem_clk: u32, graphics_clk: u32) -> Result<()> {
             supported_gfx.first().unwrap_or(&0),
         );
     }
+    let before = clocks_value(backend.applications_clocks(index));
     backend
         .set_applications_clocks(index, mem_clk, graphics_clk)
         .context("Failed to set application clocks. Do you have root/sudo permissions?")?;
-    println!(
-        "{}",
-        format!("✓ GPU {index}: Set clocks to mem={mem_clk} MHz, graphics={graphics_clk} MHz")
-            .green()
-    );
-    Ok(())
+    let mut o = Outcome::new(
+        format!("gpu{index}"),
+        "applications_clocks",
+        serde_json::json!({ "memory_mhz": mem_clk, "graphics_mhz": graphics_clk }),
+    )
+    .from_value(before)
+    .with(Status::Applied, None);
+    o.actual = clocks_value(backend.applications_clocks(index));
+    Ok(o)
 }
 
-pub fn set_clocks_all(mem_clk: u32, graphics_clk: u32) -> Result<()> {
+pub fn set_clocks(
+    index: u32,
+    mem_clk: u32,
+    graphics_clk: u32,
+    format: &OutputFormat,
+) -> Result<Outcome> {
     let backend = init_backend()?;
+    let o = clocks_outcome(&backend, index, mem_clk, graphics_clk)?;
+    emit(
+        format,
+        &o,
+        format!("✓ GPU {index}: Set clocks to mem={mem_clk} MHz, graphics={graphics_clk} MHz"),
+    )?;
+    Ok(o)
+}
+
+pub fn set_clocks_all(
+    mem_clk: u32,
+    graphics_clk: u32,
+    format: &OutputFormat,
+) -> Result<Vec<Outcome>> {
+    let backend = init_backend()?;
+    let mut out = Vec::new();
     for i in 0..backend.device_count() as u32 {
-        if let Err(e) = set_clocks(i, mem_clk, graphics_clk) {
-            eprintln!("{}", format!("✗ GPU {i}: {e}").red());
+        match clocks_outcome(&backend, i, mem_clk, graphics_clk) {
+            Ok(o) => {
+                text_line(
+                    format,
+                    format!(
+                        "✓ GPU {i}: Set clocks to mem={mem_clk} MHz, graphics={graphics_clk} MHz"
+                    ),
+                );
+                out.push(o);
+            }
+            Err(e) => {
+                eprintln!("{}", format!("✗ GPU {i}: {e}").red());
+                out.push(failed(
+                    i,
+                    "applications_clocks",
+                    serde_json::json!({ "memory_mhz": mem_clk, "graphics_mhz": graphics_clk }),
+                    &e,
+                ));
+            }
         }
     }
-    Ok(())
+    emit_all(format, &out)?;
+    Ok(out)
 }
 
-pub fn set_power_limit(index: u32, watts: u32) -> Result<()> {
+pub fn set_power_limit(index: u32, watts: u32, format: &OutputFormat) -> Result<Outcome> {
     let backend = init_backend()?;
     let milliwatts = watts * 1000;
     if let Ok((min, max)) = backend.power_limit_constraints(index) {
@@ -203,111 +262,165 @@ pub fn set_power_limit(index: u32, watts: u32) -> Result<()> {
             );
         }
     }
+    let before = current_watts(&backend, index);
     backend
         .set_power_limit(index, milliwatts)
         .context("Failed to set power limit. Do you have root/sudo permissions?")?;
-    println!(
-        "{}",
-        format!("✓ GPU {index}: Power limit set to {watts}W").green()
-    );
-    Ok(())
+    let mut o = Outcome::new(format!("gpu{index}"), "power_limit_w", watts)
+        .from_value(before)
+        .with(Status::Applied, None);
+    o.actual = current_watts(&backend, index);
+    emit(
+        format,
+        &o,
+        format!("✓ GPU {index}: Power limit set to {watts}W"),
+    )?;
+    Ok(o)
 }
 
-pub fn set_perf(index: u32, level: &PerfLevel) -> Result<()> {
-    let backend = init_backend()?;
-    match level {
-        PerfLevel::Auto => {
+/// Resolve a perf level to application clocks, or `None` for auto.
+fn perf_clocks(
+    backend: &NvidiaBackend,
+    index: u32,
+    level: &PerfLevel,
+) -> Result<Option<(u32, u32)>> {
+    let pick_high = match level {
+        PerfLevel::Auto => return Ok(None),
+        PerfLevel::High => true,
+        PerfLevel::Low => false,
+    };
+    let supported_mem = backend
+        .supported_memory_clocks(index)
+        .context("Could not determine supported clocks")?;
+    let mem = if pick_high {
+        supported_mem.first()
+    } else {
+        supported_mem.last()
+    };
+    let mem_clk = *mem.ok_or_else(|| anyhow::anyhow!("No supported memory clocks found"))?;
+    let supported_gfx = backend
+        .supported_graphics_clocks(index, mem_clk)
+        .context("Could not determine supported graphics clocks")?;
+    let gfx = if pick_high {
+        supported_gfx.first()
+    } else {
+        supported_gfx.last()
+    };
+    let gfx_clk = *gfx.ok_or_else(|| anyhow::anyhow!("No supported graphics clocks found"))?;
+    Ok(Some((mem_clk, gfx_clk)))
+}
+
+fn perf_outcome(
+    backend: &NvidiaBackend,
+    index: u32,
+    level: &PerfLevel,
+) -> Result<(Outcome, String)> {
+    let before = clocks_value(backend.applications_clocks(index));
+    let (setting_to, line) = match perf_clocks(backend, index, level)? {
+        None => {
             backend
                 .reset_applications_clocks(index)
                 .context("Failed to reset to auto. Need root?")?;
-            println!(
-                "{}",
-                format!("✓ GPU {index}: Performance set to AUTO (default clocks)").green()
-            );
+            (
+                serde_json::json!("auto"),
+                format!("✓ GPU {index}: Performance set to AUTO (default clocks)"),
+            )
         }
-        PerfLevel::High => {
-            let supported_mem = backend
-                .supported_memory_clocks(index)
-                .context("Could not determine supported clocks")?;
-            let mem_clk = *supported_mem
-                .first()
-                .ok_or_else(|| anyhow::anyhow!("No supported memory clocks found"))?;
-            let supported_gfx = backend
-                .supported_graphics_clocks(index, mem_clk)
-                .context("Could not determine supported graphics clocks")?;
-            let gfx_clk = *supported_gfx
-                .first()
-                .ok_or_else(|| anyhow::anyhow!("No supported graphics clocks found"))?;
+        Some((mem_clk, gfx_clk)) => {
+            let (name, ctx) = match level {
+                PerfLevel::High => ("HIGH", "Failed to set high perf clocks. Need root?"),
+                _ => ("LOW", "Failed to set low perf clocks. Need root?"),
+            };
             backend
                 .set_applications_clocks(index, mem_clk, gfx_clk)
-                .context("Failed to set high perf clocks. Need root?")?;
-            println!(
-                "{}",
+                .context(ctx)?;
+            (
+                serde_json::json!({ "memory_mhz": mem_clk, "graphics_mhz": gfx_clk }),
                 format!(
-                    "✓ GPU {index}: Performance set to HIGH (mem={mem_clk}, gfx={gfx_clk} MHz)"
-                )
-                .green()
-            );
+                    "✓ GPU {index}: Performance set to {name} (mem={mem_clk}, gfx={gfx_clk} MHz)"
+                ),
+            )
         }
-        PerfLevel::Low => {
-            let supported_mem = backend
-                .supported_memory_clocks(index)
-                .context("Could not determine supported clocks")?;
-            let mem_clk = *supported_mem
-                .last()
-                .ok_or_else(|| anyhow::anyhow!("No supported memory clocks found"))?;
-            let supported_gfx = backend
-                .supported_graphics_clocks(index, mem_clk)
-                .context("Could not determine supported graphics clocks")?;
-            let gfx_clk = *supported_gfx
-                .last()
-                .ok_or_else(|| anyhow::anyhow!("No supported graphics clocks found"))?;
-            backend
-                .set_applications_clocks(index, mem_clk, gfx_clk)
-                .context("Failed to set low perf clocks. Need root?")?;
-            println!(
-                "{}",
-                format!(
-                    "✓ GPU {index}: Performance set to LOW (mem={mem_clk}, gfx={gfx_clk} MHz)"
-                )
-                .green()
-            );
-        }
-    }
-    Ok(())
+    };
+    let mut o = Outcome::new(format!("gpu{index}"), "applications_clocks", setting_to)
+        .from_value(before)
+        .with(Status::Applied, None);
+    o.actual = clocks_value(backend.applications_clocks(index));
+    Ok((o, line))
 }
 
-pub fn set_perf_all(level: &PerfLevel) -> Result<()> {
+pub fn set_perf(index: u32, level: &PerfLevel, format: &OutputFormat) -> Result<Outcome> {
     let backend = init_backend()?;
+    let (o, line) = perf_outcome(&backend, index, level)?;
+    emit(format, &o, line)?;
+    Ok(o)
+}
+
+pub fn set_perf_all(level: &PerfLevel, format: &OutputFormat) -> Result<Vec<Outcome>> {
+    let backend = init_backend()?;
+    let mut out = Vec::new();
     for i in 0..backend.device_count() as u32 {
-        if let Err(e) = set_perf(i, level) {
-            eprintln!("{}", format!("✗ GPU {i}: {e}").red());
+        match perf_outcome(&backend, i, level) {
+            Ok((o, line)) => {
+                text_line(format, line);
+                out.push(o);
+            }
+            Err(e) => {
+                eprintln!("{}", format!("✗ GPU {i}: {e}").red());
+                out.push(failed(
+                    i,
+                    "applications_clocks",
+                    format!("{level:?}").to_lowercase(),
+                    &e,
+                ));
+            }
         }
     }
-    Ok(())
+    emit_all(format, &out)?;
+    Ok(out)
 }
 
-pub fn reset_clocks(index: u32) -> Result<()> {
-    let backend = init_backend()?;
+fn reset_outcome(backend: &NvidiaBackend, index: u32) -> Result<Outcome> {
+    let before = clocks_value(backend.applications_clocks(index));
     backend
         .reset_applications_clocks(index)
         .context("Failed to reset clocks. Do you have root/sudo permissions?")?;
-    println!(
-        "{}",
-        format!("✓ GPU {index}: Clocks reset to default").green()
-    );
-    Ok(())
+    let mut o = Outcome::new(format!("gpu{index}"), "applications_clocks", "default")
+        .from_value(before)
+        .with(Status::Applied, None);
+    o.actual = clocks_value(backend.applications_clocks(index));
+    Ok(o)
 }
 
-pub fn reset_all() -> Result<()> {
+pub fn reset_clocks(index: u32, format: &OutputFormat) -> Result<Outcome> {
     let backend = init_backend()?;
+    let o = reset_outcome(&backend, index)?;
+    emit(
+        format,
+        &o,
+        format!("✓ GPU {index}: Clocks reset to default"),
+    )?;
+    Ok(o)
+}
+
+pub fn reset_all(format: &OutputFormat) -> Result<Vec<Outcome>> {
+    let backend = init_backend()?;
+    let mut out = Vec::new();
     for i in 0..backend.device_count() as u32 {
-        if let Err(e) = reset_clocks(i) {
-            eprintln!("{}", format!("✗ GPU {i}: {e}").red());
+        match reset_outcome(&backend, i) {
+            Ok(o) => {
+                text_line(format, format!("✓ GPU {i}: Clocks reset to default"));
+                out.push(o);
+            }
+            Err(e) => {
+                eprintln!("{}", format!("✗ GPU {i}: {e}").red());
+                out.push(failed(i, "applications_clocks", "default", &e));
+            }
         }
     }
-    println!("{}", "✓ All GPUs reset to defaults".green());
-    Ok(())
+    text_line(format, "✓ All GPUs reset to defaults".to_string());
+    emit_all(format, &out)?;
+    Ok(out)
 }
 
 pub fn supported_clocks(index: u32, format: &OutputFormat) -> Result<()> {

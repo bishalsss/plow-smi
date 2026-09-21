@@ -51,6 +51,26 @@ pub struct AmdsmiFrequencies {
     pub frequency: [u64; AMDSMI_MAX_NUM_FREQUENCIES],
 }
 
+/// `amdsmi_power_cap_info_t`. Units are microwatts on bare-metal Linux.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AmdsmiPowerCapInfo {
+    pub power_cap: u64,
+    pub default_power_cap: u64,
+    pub dpm_cap: u64,
+    pub min_power_cap: u64,
+    pub max_power_cap: u64,
+    reserved: [u64; 3],
+}
+
+/// `amdsmi_driver_info_t`.
+#[repr(C)]
+pub struct AmdsmiDriverInfo {
+    pub driver_version: [u8; AMDSMI_MAX_STRING_LENGTH],
+    pub driver_date: [u8; AMDSMI_MAX_STRING_LENGTH],
+    pub driver_name: [u8; AMDSMI_MAX_STRING_LENGTH],
+}
+
 #[repr(C)]
 pub struct AmdsmiBoardInfo {
     pub model_number: [u8; AMDSMI_MAX_STRING_LENGTH],
@@ -80,12 +100,20 @@ pub struct AmdSmiApi {
     amdsmi_get_gpu_fan_rpms: unsafe extern "C" fn(ProcessorHandle, u32, *mut i64) -> AmdsmiStatus,
     amdsmi_get_gpu_device_uuid: unsafe extern "C" fn(ProcessorHandle, *mut u32, *mut u8) -> AmdsmiStatus,
     amdsmi_get_gpu_board_info: unsafe extern "C" fn(ProcessorHandle, *mut AmdsmiBoardInfo) -> AmdsmiStatus,
-    /// Optional: BDF id string when present in newer AMD SMI builds.
-    amdsmi_get_gpu_device_bdf_id: Option<unsafe extern "C" fn(ProcessorHandle, *mut u64) -> AmdsmiStatus>,
+    /// `amdsmi_get_gpu_device_bdf`: fills an `amdsmi_bdf_t`, a packed u64.
+    amdsmi_get_gpu_device_bdf: Option<unsafe extern "C" fn(ProcessorHandle, *mut u64) -> AmdsmiStatus>,
+    /// `amdsmi_get_gpu_bdf_id`: the kernel's BDF id, a different layout.
+    amdsmi_get_gpu_bdf_id: Option<unsafe extern "C" fn(ProcessorHandle, *mut u64) -> AmdsmiStatus>,
     amdsmi_get_gpu_perf_level: Option<unsafe extern "C" fn(ProcessorHandle, *mut u32) -> AmdsmiStatus>,
     amdsmi_set_gpu_perf_level: Option<unsafe extern "C" fn(ProcessorHandle, u32) -> AmdsmiStatus>,
     amdsmi_set_power_cap: Option<unsafe extern "C" fn(ProcessorHandle, u32, u64) -> AmdsmiStatus>,
+    amdsmi_get_power_cap_info:
+        Option<unsafe extern "C" fn(ProcessorHandle, u32, *mut AmdsmiPowerCapInfo) -> AmdsmiStatus>,
+    amdsmi_get_gpu_driver_info:
+        Option<unsafe extern "C" fn(ProcessorHandle, *mut AmdsmiDriverInfo) -> AmdsmiStatus>,
     _lib: Library,
+    /// Declared after `_lib` so they are dropped after it.
+    _deps: Vec<Library>,
 }
 
 // SAFETY: opaque handles + fn pointers; callers synchronize via &mut refresh.
@@ -94,6 +122,14 @@ unsafe impl Sync for AmdSmiApi {}
 
 impl AmdSmiApi {
     pub fn load() -> Result<Self> {
+        // libamd_smi links libstdc++ and dlopens libdrm at init. Under a Nix
+        // build neither is on the loader's path, so load them first.
+        let deps = dynlib::preload(&[
+            "libstdc++.so.6",
+            "libgcc_s.so.1",
+            "libdrm.so.2",
+            "libdrm_amdgpu.so.1",
+        ]);
         let candidates = dynlib::amdsmi_candidates();
         let lib = dynlib::open_first(candidates)?;
         let library = "libamd_smi";
@@ -163,10 +199,11 @@ impl AmdSmiApi {
                     b"amdsmi_get_gpu_board_info\0",
                     library,
                 )?,
-                amdsmi_get_gpu_device_bdf_id: dynlib::resolve_optional(
+                amdsmi_get_gpu_device_bdf: dynlib::resolve_optional(
                     &lib,
-                    b"amdsmi_get_gpu_device_bdf_id\0",
+                    b"amdsmi_get_gpu_device_bdf\0",
                 ),
+                amdsmi_get_gpu_bdf_id: dynlib::resolve_optional(&lib, b"amdsmi_get_gpu_bdf_id\0"),
                 amdsmi_get_gpu_perf_level: dynlib::resolve_optional(
                     &lib,
                     b"amdsmi_get_gpu_perf_level\0",
@@ -176,7 +213,16 @@ impl AmdSmiApi {
                     b"amdsmi_set_gpu_perf_level\0",
                 ),
                 amdsmi_set_power_cap: dynlib::resolve_optional(&lib, b"amdsmi_set_power_cap\0"),
+                amdsmi_get_power_cap_info: dynlib::resolve_optional(
+                    &lib,
+                    b"amdsmi_get_power_cap_info\0",
+                ),
+                amdsmi_get_gpu_driver_info: dynlib::resolve_optional(
+                    &lib,
+                    b"amdsmi_get_gpu_driver_info\0",
+                ),
                 _lib: lib,
+                _deps: deps,
             })
         }
     }
@@ -291,7 +337,16 @@ impl AmdSmiApi {
     }
 
     /// Power limit in watts.
+    ///
+    /// From the power-cap query, whose unit is fixed (µW). `power_info`'s
+    /// `power_limit` is documented in watts but is µW on MI300/MI350 boards,
+    /// which reported a 1 GW limit; it is only the fallback.
     pub fn power_limit_watts(&self, h: ProcessorHandle) -> Option<f32> {
+        if let Some((cap_uw, ..)) = self.power_cap_info_uw(h) {
+            if cap_uw > 0 {
+                return Some((cap_uw / 1_000_000) as f32);
+            }
+        }
         let mut info = unsafe { std::mem::zeroed::<AmdsmiPowerInfo>() };
         if unsafe { (self.amdsmi_get_power_info)(h, &mut info) } == AMDSMI_STATUS_SUCCESS
             && info.power_limit > 0
@@ -385,20 +440,26 @@ impl AmdSmiApi {
         ))
     }
 
+    /// PCI address as `dddd:bb:dd.f`.
+    ///
+    /// The symbol this used to look up (`amdsmi_get_gpu_device_bdf_id`) does
+    /// not exist, so the address was always empty. `amdsmi_bdf_t` packs
+    /// function:3, device:5, bus:8, domain:48 from the low bit; the kernel's
+    /// BDF id puts the domain at bit 32 instead.
     pub fn bdf_id(&self, h: ProcessorHandle) -> Option<String> {
-        let f = self.amdsmi_get_gpu_device_bdf_id?;
-        let mut bdf = 0u64;
-        if unsafe { f(h, &mut bdf) } == AMDSMI_STATUS_SUCCESS {
-            let domain = (bdf >> 32) & 0xffff;
-            let bus = (bdf >> 8) & 0xff;
-            let device = (bdf >> 3) & 0x1f;
-            let function = bdf & 0x7;
-            Some(format!(
-                "{domain:04x}:{bus:02x}:{device:02x}.{function:x}"
-            ))
-        } else {
-            None
+        let fmt = |domain: u64, bus: u64, device: u64, function: u64| {
+            format!("{domain:04x}:{bus:02x}:{device:02x}.{function:x}")
+        };
+        if let Some(f) = self.amdsmi_get_gpu_device_bdf {
+            let mut v = 0u64;
+            if unsafe { f(h, &mut v) } == AMDSMI_STATUS_SUCCESS {
+                return Some(fmt(v >> 16, (v >> 8) & 0xff, (v >> 3) & 0x1f, v & 0x7));
+            }
         }
+        let f = self.amdsmi_get_gpu_bdf_id?;
+        let mut v = 0u64;
+        (unsafe { f(h, &mut v) } == AMDSMI_STATUS_SUCCESS)
+            .then(|| fmt((v >> 32) & 0xffff, (v >> 8) & 0xff, (v >> 3) & 0x1f, v & 0x7))
     }
 
     /// Current performance level enum (`0=auto`, `1=low`, `2=high`, `3=manual`).
@@ -424,6 +485,32 @@ impl AmdSmiApi {
             )));
         }
         Ok(())
+    }
+
+    /// Power cap `(current, default, min, max)` in microwatts, sensor 0.
+    pub fn power_cap_info_uw(&self, h: ProcessorHandle) -> Option<(u64, u64, u64, u64)> {
+        let f = self.amdsmi_get_power_cap_info?;
+        let mut info = unsafe { std::mem::zeroed::<AmdsmiPowerCapInfo>() };
+        if unsafe { f(h, 0, &mut info) } != AMDSMI_STATUS_SUCCESS {
+            return None;
+        }
+        Some((
+            info.power_cap,
+            info.default_power_cap,
+            info.min_power_cap,
+            info.max_power_cap,
+        ))
+    }
+
+    /// Kernel driver version (e.g. amdgpu `6.14.14`).
+    pub fn driver_version(&self, h: ProcessorHandle) -> Option<String> {
+        let f = self.amdsmi_get_gpu_driver_info?;
+        let mut info = unsafe { std::mem::zeroed::<AmdsmiDriverInfo>() };
+        if unsafe { f(h, &mut info) } != AMDSMI_STATUS_SUCCESS {
+            return None;
+        }
+        let v = c_string_from_buf(&info.driver_version);
+        (!v.is_empty()).then_some(v)
     }
 
     /// Set power cap. Input is milliwatts; AMD SMI expects microwatts.

@@ -15,7 +15,7 @@ pub fn open_first(candidates: &[&str]) -> Result<Library> {
             }
         }
     }
-    let _ = last_err;
+    tracing::debug!(error = %last_err, "no candidate library could be loaded");
     Err(GpuError::LibraryNotFound {
         candidates: candidates.join(", "),
     })
@@ -70,6 +70,47 @@ pub fn amdsmi_candidates() -> &'static [&'static str] {
         #[cfg(target_os = "windows")]
         "amd_smi_dll.dll",
     ]
+}
+
+/// Library directories of the host distribution.
+///
+/// A binary built by Nix has a dynamic loader that searches only the Nix
+/// store, so a vendor library found by absolute path (`/opt/rocm/lib/…`) still
+/// fails to load: its own dependencies (`libstdc++.so.6`, `libdrm.so.2`) live
+/// here, where that loader never looks.
+const HOST_LIB_DIRS: &[&str] = &[
+    "/lib/x86_64-linux-gnu",
+    "/usr/lib/x86_64-linux-gnu",
+    "/lib/aarch64-linux-gnu",
+    "/usr/lib/aarch64-linux-gnu",
+    "/usr/lib64",
+    "/lib64",
+    "/usr/lib",
+    "/opt/rocm/lib",
+];
+
+/// Load each soname, so a vendor library that needs it finds it already
+/// loaded. The binary's own search path is tried first (under Nix that gives
+/// its own, newer `libstdc++`), then the host's directories. A soname that
+/// cannot be found is skipped: the vendor library may not need it.
+///
+/// The returned handles must outlive the vendor library.
+pub fn preload(sonames: &[&str]) -> Vec<Library> {
+    let mut loaded = Vec::new();
+    for soname in sonames {
+        let found = unsafe { Library::new(soname) }.ok().or_else(|| {
+            HOST_LIB_DIRS
+                .iter()
+                .map(|d| std::path::Path::new(d).join(soname))
+                .filter(|p| p.exists())
+                .find_map(|p| unsafe { Library::new(&p) }.ok())
+        });
+        match found {
+            Some(lib) => loaded.push(lib),
+            None => tracing::debug!(soname, "preload: not found"),
+        }
+    }
+    loaded
 }
 
 /// Level Zero loader sonames.

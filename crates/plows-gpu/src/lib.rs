@@ -55,6 +55,7 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 pub mod backend;
+pub mod control;
 pub mod device;
 pub mod error;
 pub mod ffi;
@@ -62,6 +63,7 @@ pub mod loader;
 pub mod metrics;
 pub mod process;
 
+pub use control::PowerLimits;
 pub use device::{GpuDevice, Vendor};
 pub use error::{GpuError, Result};
 pub use loader::GpuManager;

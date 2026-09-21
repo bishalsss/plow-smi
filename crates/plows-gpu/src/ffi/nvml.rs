@@ -87,6 +87,12 @@ pub struct NvmlApi {
     nvml_device_get_power_management_limit_constraints:
         Option<unsafe extern "C" fn(NvmlDevice, *mut c_uint, *mut c_uint) -> u32>,
     nvml_device_set_power_management_limit: Option<unsafe extern "C" fn(NvmlDevice, c_uint) -> u32>,
+    nvml_device_get_power_management_limit: Option<unsafe extern "C" fn(NvmlDevice, *mut c_uint) -> u32>,
+    nvml_device_get_power_management_default_limit:
+        Option<unsafe extern "C" fn(NvmlDevice, *mut c_uint) -> u32>,
+    nvml_device_get_persistence_mode: Option<unsafe extern "C" fn(NvmlDevice, *mut u32) -> u32>,
+    nvml_device_get_applications_clock:
+        Option<unsafe extern "C" fn(NvmlDevice, u32, *mut c_uint) -> u32>,
     nvml_device_get_supported_memory_clocks:
         Option<unsafe extern "C" fn(NvmlDevice, *mut c_uint, *mut c_uint) -> u32>,
     nvml_device_get_supported_graphics_clocks:
@@ -226,6 +232,22 @@ impl NvmlApi {
                 nvml_device_set_power_management_limit: dynlib::resolve_optional(
                     &lib,
                     b"nvmlDeviceSetPowerManagementLimit\0",
+                ),
+                nvml_device_get_power_management_limit: dynlib::resolve_optional(
+                    &lib,
+                    b"nvmlDeviceGetPowerManagementLimit\0",
+                ),
+                nvml_device_get_power_management_default_limit: dynlib::resolve_optional(
+                    &lib,
+                    b"nvmlDeviceGetPowerManagementDefaultLimit\0",
+                ),
+                nvml_device_get_persistence_mode: dynlib::resolve_optional(
+                    &lib,
+                    b"nvmlDeviceGetPersistenceMode\0",
+                ),
+                nvml_device_get_applications_clock: dynlib::resolve_optional(
+                    &lib,
+                    b"nvmlDeviceGetApplicationsClock\0",
                 ),
                 nvml_device_get_supported_memory_clocks: dynlib::resolve_optional(
                     &lib,
@@ -555,6 +577,37 @@ impl NvmlApi {
         } else {
             None
         }
+    }
+
+    /// The power management limit currently set, in milliwatts.
+    pub fn power_management_limit_mw(&self, device: NvmlDevice) -> Option<u32> {
+        let f = self.nvml_device_get_power_management_limit?;
+        let mut mw = 0u32;
+        (unsafe { f(device, &mut mw) } == NVML_SUCCESS).then_some(mw)
+    }
+
+    /// The board's default power management limit, in milliwatts.
+    pub fn power_management_default_limit_mw(&self, device: NvmlDevice) -> Option<u32> {
+        let f = self.nvml_device_get_power_management_default_limit?;
+        let mut mw = 0u32;
+        (unsafe { f(device, &mut mw) } == NVML_SUCCESS).then_some(mw)
+    }
+
+    /// Whether persistence mode is on. Without it the driver can unload
+    /// between uses and forget a power limit.
+    pub fn persistence_mode(&self, device: NvmlDevice) -> Option<bool> {
+        let f = self.nvml_device_get_persistence_mode?;
+        let mut mode = 0u32;
+        (unsafe { f(device, &mut mode) } == NVML_SUCCESS).then_some(mode == 1)
+    }
+
+    /// Application clocks `(memory, graphics)` in MHz.
+    pub fn applications_clocks_mhz(&self, device: NvmlDevice) -> Option<(u32, u32)> {
+        let f = self.nvml_device_get_applications_clock?;
+        let (mut mem, mut gfx) = (0u32, 0u32);
+        let ok_mem = unsafe { f(device, NVML_CLOCK_MEM, &mut mem) } == NVML_SUCCESS;
+        let ok_gfx = unsafe { f(device, NVML_CLOCK_GRAPHICS, &mut gfx) } == NVML_SUCCESS;
+        (ok_mem && ok_gfx).then_some((mem, gfx))
     }
 
     /// Set power management limit in milliwatts.
