@@ -9,7 +9,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::{Router, routing::get};
+use axum::{routing::get, Router};
 use clap::Parser;
 use tracing::{error, info, warn};
 
@@ -28,7 +28,6 @@ use plows_exporter::metrics::system_metrics::update_system_metrics;
 #[cfg(feature = "tpu")]
 use plows_exporter::collector::tpu::TpuCollector;
 
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let config = Config::parse();
@@ -43,10 +42,7 @@ async fn main() -> anyhow::Result<()> {
         .with_thread_ids(true)
         .init();
 
-    info!(
-        version = env!("CARGO_PKG_VERSION"),
-        "Starting GPU Exporter"
-    );
+    info!(version = env!("CARGO_PKG_VERSION"), "Starting GPU Exporter");
 
     // Validate configuration
     if config.no_collectors_enabled() {
@@ -66,9 +62,13 @@ async fn main() -> anyhow::Result<()> {
             nvidia: config.nvidia_enabled() || default_all,
             amd: config.amd_enabled() || default_all,
             intel: config.intel_enabled() || default_all,
+            apple: config.apple_enabled() || default_all,
         };
-        if filter.nvidia || filter.amd || filter.intel {
-            info!("Registering plows-gpu collector (nvidia={} amd={} intel={})", filter.nvidia, filter.amd, filter.intel);
+        if filter.any() {
+            info!(
+                "Registering plows-gpu collector (nvidia={} amd={} intel={})",
+                filter.nvidia, filter.amd, filter.intel
+            );
             let gpu = collector::gpu::GpuCollector::new(filter);
             if let Err(e) = manager.register(Box::new(gpu)).await {
                 warn!(error = %e, "GPU collector failed to initialize (continuing without it)");

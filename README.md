@@ -5,7 +5,7 @@
 [![Nix](https://img.shields.io/badge/Nix-flakes-5277C3.svg?logo=nixos&logoColor=white)](https://nixos.org/)
 [![Infervisor](https://img.shields.io/badge/by-Infervisor-111111.svg)](https://infervisor.ai)
 
-Production-grade GPU observability and control for heterogeneous compute — NVIDIA, AMD, and Intel — from one Rust workspace.
+Production-grade GPU observability and control for heterogeneous compute — NVIDIA, AMD, Intel, and Apple Silicon — from one Rust workspace.
 
 **No compile-time GPU SDKs.** Vendor libraries (`libnvidia-ml`, `libamd_smi`, `libze_loader`) are loaded at runtime with `dlopen`. One binary works on CPU-only hosts and enables GPUs automatically when drivers are present.
 
@@ -71,6 +71,23 @@ A NixOS module for running the exporter as a systemd service is available at
 `nixosModules.default` (`services.plow-smi-exporter`).
 
 ## Requirements
+
+### Apple Silicon
+
+Native ARM64 macOS support provides CPU/GPU activity, clocks, power, temperatures,
+unified memory, and Neural Engine power without sudo. Unsupported ANE utilization
+and clocks remain absent; shared RAM is not reported as dedicated VRAM.
+
+```bash
+plow-smi top
+plow-smi ctl apple-info --format json
+plow-smi export --apple --system --bind 127.0.0.1
+```
+
+Apple control is read-only. Hardware validated on M4 Pro / macOS 26.5.1;
+other M-series Macs are intended but unverified. Apple private APIs may change.
+See [DESIGN_APPLE_SILICON.md](DESIGN_APPLE_SILICON.md) for compatibility and
+direct Rust library integration details.
 
 | Need | At build | At runtime |
 |------|----------|------------|

@@ -39,6 +39,14 @@ enum Commands {
         #[arg(long)]
         amd: bool,
 
+        /// Enable Intel GPU metrics
+        #[arg(long)]
+        intel: bool,
+
+        /// Enable Apple Silicon GPU, CPU and Neural Engine metrics
+        #[arg(long)]
+        apple: bool,
+
         /// Enable system metrics (CPU, RAM, disk, network)
         #[arg(long)]
         system: bool,
@@ -68,6 +76,18 @@ enum Commands {
 
 #[derive(Subcommand)]
 pub enum CtlCommands {
+    /// List Apple Silicon devices (read-only)
+    AppleList {
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
+    },
+    /// Show Apple Silicon GPU/CPU/NPU telemetry (read-only)
+    AppleInfo {
+        #[arg(default_value_t = 0)]
+        gpu: u32,
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
+    },
     /// List every GPU (NVIDIA + AMD + Intel)
     #[command(name = "list")]
     List {
@@ -224,8 +244,7 @@ pub enum CtlCommands {
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "warn".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "warn".into()),
         )
         .init();
 
@@ -235,15 +254,26 @@ fn main() -> anyhow::Result<()> {
         Commands::Export {
             nvidia,
             amd,
+            intel,
+            apple,
             system,
             all,
             port,
             bind,
-        } => cmd_export::run(nvidia, amd, system, all, port, bind),
+        } => cmd_export::run(
+            plows_exporter::collector::gpu::VendorFilter {
+                nvidia,
+                amd,
+                intel,
+                apple,
+            },
+            system,
+            all,
+            port,
+            bind,
+        ),
 
-        Commands::Top => {
-            plows_top::run().map_err(|e| anyhow::anyhow!("{e}"))
-        }
+        Commands::Top => plows_top::run().map_err(|e| anyhow::anyhow!("{e}")),
 
         Commands::Ctl(ctl) => cmd_ctl::run(ctl),
     }

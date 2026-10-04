@@ -94,3 +94,4 @@ pub fn failed(
 ) -> Outcome {
     Outcome::new(format!("gpu{index}"), setting, to).with(Status::Failed, Some(err.to_string()))
 }
+pub mod apple;

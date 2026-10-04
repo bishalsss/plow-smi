@@ -12,6 +12,8 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 pub mod amdsmi;
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+pub(crate) mod apple;
 pub mod dynlib;
 pub mod levelzero;
 pub mod nvml;

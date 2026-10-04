@@ -1,14 +1,16 @@
 //! Ctl subcommand — GPU power & clock control.
 //! Delegates entirely to the `plows-ctl` library (DRY principle).
 
-use anyhow::Result;
 use crate::CtlCommands;
+use anyhow::Result;
 
 /// This CLI prints the human text, as it always has.
 const TEXT: &plows_ctl::OutputFormat = &plows_ctl::OutputFormat::Text;
 
 pub fn run(cmd: CtlCommands) -> Result<()> {
     match cmd {
+        CtlCommands::AppleList { format } => plows_ctl::apple::list_gpus(&format),
+        CtlCommands::AppleInfo { gpu, format } => plows_ctl::apple::gpu_info(gpu, &format),
         CtlCommands::List { format } => plows_ctl::list::list_all(&format),
         CtlCommands::NvidiaList { format } => plows_ctl::nvidia::list_gpus(&format),
         CtlCommands::NvidiaInfo { gpu, format } => plows_ctl::nvidia::gpu_info(gpu, &format),
@@ -49,7 +51,9 @@ pub fn run(cmd: CtlCommands) -> Result<()> {
         }
         CtlCommands::AmdList { format } => plows_ctl::amd::list_gpus(&format),
         CtlCommands::AmdInfo { gpu, format } => plows_ctl::amd::gpu_info(gpu, &format),
-        CtlCommands::AmdSetPowerLimit { gpu, watts } => plows_ctl::amd::set_power_limit(gpu, watts, TEXT).map(drop),
+        CtlCommands::AmdSetPowerLimit { gpu, watts } => {
+            plows_ctl::amd::set_power_limit(gpu, watts, TEXT).map(drop)
+        }
         CtlCommands::AmdSetPerf { gpu, level, all } => {
             if all {
                 plows_ctl::amd::set_perf_all(&level, TEXT).map(drop)

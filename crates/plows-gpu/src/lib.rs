@@ -67,7 +67,9 @@ pub use control::PowerLimits;
 pub use device::{GpuDevice, Vendor};
 pub use error::{GpuError, Result};
 pub use loader::GpuManager;
-pub use metrics::{DeviceMetrics, GpuBackend};
+pub use metrics::{
+    CpuClusterMetrics, DeviceMetrics, EngineMetrics, GpuBackend, SocMetrics, TemperatureSensor,
+};
 pub use process::GpuProcessInfo;
 
-pub use backend::{AmdBackend, IntelBackend, NvidiaBackend};
+pub use backend::{AmdBackend, AppleBackend, IntelBackend, NvidiaBackend};

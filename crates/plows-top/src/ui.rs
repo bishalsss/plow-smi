@@ -129,8 +129,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),  // Header bar
-            Constraint::Length(1),  // Tab bar
+            Constraint::Length(1), // Header bar
+            Constraint::Length(1), // Tab bar
             Constraint::Min(10),   // Content
             Constraint::Length(2), // Footer
         ])
@@ -211,8 +211,7 @@ fn draw_header_bar(frame: &mut Frame, app: &App, area: Rect) {
         Span::raw(" "),
     ];
 
-    let para = Paragraph::new(Line::from(spans))
-        .style(Style::default().bg(Color::Rgb(30, 30, 46)));
+    let para = Paragraph::new(Line::from(spans)).style(Style::default().bg(Color::Rgb(30, 30, 46)));
     frame.render_widget(para, area);
 }
 
@@ -248,7 +247,7 @@ fn draw_overview(frame: &mut Frame, app: &App, area: Rect) {
         .constraints([
             Constraint::Length(cpu_section_height(app)), // CPU + Mem section
             Constraint::Min(4),                          // GPU overview
-            Constraint::Length(6),                        // Sparklines
+            Constraint::Length(6),                       // Sparklines
         ])
         .split(area);
 
@@ -280,10 +279,7 @@ fn draw_cpu_bars(frame: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(DARK_GRAY))
-        .title(Span::styled(
-            " CPU ",
-            Style::default().fg(GREEN).bold(),
-        ));
+        .title(Span::styled(" CPU ", Style::default().fg(GREEN).bold()));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -315,17 +311,11 @@ fn draw_cpu_bars(frame: &mut Frame, app: &App, area: Rect) {
             let color = pct_color(usage);
 
             let line = Line::from(vec![
-                Span::styled(
-                    format!("{:>2}", i),
-                    Style::default().fg(DARK_GRAY),
-                ),
+                Span::styled(format!("{:>2}", i), Style::default().fg(DARK_GRAY)),
                 Span::styled("[", Style::default().fg(DARK_GRAY)),
                 Span::styled(filled, Style::default().fg(color)),
                 Span::styled(empty, Style::default().fg(DARK_GRAY)),
-                Span::styled(
-                    format!("{:>5.1}%", usage),
-                    Style::default().fg(color),
-                ),
+                Span::styled(format!("{:>5.1}%", usage), Style::default().fg(color)),
                 Span::styled("]", Style::default().fg(DARK_GRAY)),
             ]);
             lines.push(line);
@@ -457,10 +447,7 @@ fn draw_gpu_overview(frame: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(DARK_GRAY))
-        .title(Span::styled(
-            " GPUs ",
-            Style::default().fg(MAGENTA).bold(),
-        ));
+        .title(Span::styled(" GPUs ", Style::default().fg(MAGENTA).bold()));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -481,7 +468,7 @@ fn draw_gpu_overview(frame: &mut Frame, app: &App, area: Rect) {
     let gpu_constraints: Vec<Constraint> = app
         .gpus
         .iter()
-        .map(|_| Constraint::Length(3))
+        .map(|gpu| Constraint::Length(if gpu.vendor == "apple" { 6 } else { 3 }))
         .collect();
 
     let gpu_areas = Layout::default()
@@ -498,7 +485,17 @@ fn draw_gpu_overview(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 /// Draw a single GPU row in overview (3 lines: name, util bar, mem bar).
-fn draw_gpu_row(frame: &mut Frame, app: &App, gpu: &plows_exporter::collector::GpuSnapshot, idx: usize, area: Rect) {
+fn draw_gpu_row(
+    frame: &mut Frame,
+    app: &App,
+    gpu: &plows_exporter::collector::GpuSnapshot,
+    idx: usize,
+    area: Rect,
+) {
+    if gpu.vendor == "apple" {
+        draw_apple_row(frame, gpu, area);
+        return;
+    }
     if area.height < 3 || area.width < 20 {
         return;
     }
@@ -538,15 +535,9 @@ fn draw_gpu_row(frame: &mut Frame, app: &App, gpu: &plows_exporter::collector::G
             }),
         ),
         Span::styled(" │ ", Style::default().fg(DARK_GRAY)),
-        Span::styled(
-            truncate_str(&gpu.brand, 24),
-            Style::default().fg(WHITE),
-        ),
+        Span::styled(truncate_str(&gpu.brand, 24), Style::default().fg(WHITE)),
         Span::styled(" │ ", Style::default().fg(DARK_GRAY)),
-        Span::styled(
-            format!("{temp}°C"),
-            Style::default().fg(temp_color(temp)),
-        ),
+        Span::styled(format!("{temp}°C"), Style::default().fg(temp_color(temp))),
         Span::styled(" │ ", Style::default().fg(DARK_GRAY)),
         Span::styled(
             format!("{power_w}/{power_limit_w}W"),
@@ -645,7 +636,9 @@ fn draw_history_section(frame: &mut Frame, app: &App, area: Rect) {
             .iter()
             .map(|v| *v as u64)
             .collect();
-        let gpu_util = app.gpus.get(app.selected_gpu)
+        let gpu_util = app
+            .gpus
+            .get(app.selected_gpu)
             .and_then(|g| g.gpu_utilization_percent)
             .unwrap_or(0);
         let sparkline = Sparkline::default()
@@ -671,7 +664,11 @@ fn draw_history_section(frame: &mut Frame, app: &App, area: Rect) {
             .block(
                 Block::default()
                     .title(Span::styled(
-                        format!(" Net ▼{} ▲{} ", fmt_rate(app.net_rx_rate), fmt_rate(app.net_tx_rate)),
+                        format!(
+                            " Net ▼{} ▲{} ",
+                            fmt_rate(app.net_rx_rate),
+                            fmt_rate(app.net_tx_rate)
+                        ),
                         Style::default().fg(CYAN),
                     ))
                     .borders(Borders::ALL)
@@ -685,28 +682,103 @@ fn draw_history_section(frame: &mut Frame, app: &App, area: Rect) {
 
 // ─── GPU Detail Tab ─────────────────────────────────────────────────────────
 
+fn apple_engine_line(name: &str, engine: &plows_gpu::EngineMetrics, width: usize) -> Line<'static> {
+    let value = |v: Option<f32>, unit: &str| {
+        v.map(|v| format!("{v:.1}{unit}"))
+            .unwrap_or_else(|| "N/A".into())
+    };
+    let (filled, empty) = htop_bar(
+        width.saturating_sub(58),
+        engine.utilization.unwrap_or(0.0) as f64,
+    );
+    Line::from(vec![
+        Span::styled(format!(" {name:>3} ["), Style::default().fg(CYAN)),
+        Span::styled(filled, Style::default().fg(GREEN)),
+        Span::raw(empty),
+        Span::raw(format!(
+            "] {:>6}  {:>7}  {:>9}  {}",
+            value(engine.utilization, "%"),
+            value(engine.power_watts, "W"),
+            engine
+                .clock_mhz
+                .map(|f| format!("{f}MHz"))
+                .unwrap_or_else(|| "N/A".into()),
+            value(engine.temperature_celsius, "°C")
+        )),
+    ])
+}
+
+fn draw_apple_row(frame: &mut Frame, gpu: &plows_exporter::collector::GpuSnapshot, area: Rect) {
+    let soc = gpu.soc.clone().unwrap_or_default();
+    let engine = plows_gpu::EngineMetrics {
+        utilization: gpu.gpu_utilization_percent.map(|v| v as f32),
+        power_watts: gpu.power_usage_mw.map(|v| v as f32 / 1000.0),
+        clock_mhz: gpu.clock_core_mhz,
+        temperature_celsius: gpu.temperature_celsius.map(|v| v as f32),
+        ..Default::default()
+    };
+    let memory = |v: Option<u64>| v.map(fmt_bytes_long).unwrap_or_else(|| "N/A".into());
+    let power = |v: Option<f32>| {
+        v.map(|v| format!("{v:.2}W"))
+            .unwrap_or_else(|| "N/A".into())
+    };
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled(
+                format!(" {} [APPLE] · CPU / GPU / Neural Engine", gpu.brand),
+                Style::default().fg(MAGENTA).bold(),
+            )),
+            apple_engine_line("CPU", &soc.cpu, area.width as usize),
+            apple_engine_line("GPU", &engine, area.width as usize),
+            apple_engine_line("ANE", &soc.npu, area.width as usize),
+            Line::from(format!(
+                " Unified RAM: {} / {} (shared, not VRAM)",
+                memory(soc.memory_used_bytes),
+                memory(soc.memory_total_bytes)
+            )),
+            Line::from(format!(
+                " Compute: {} · System: {} · unavailable counters = N/A",
+                power(soc.compute_power_watts),
+                power(soc.system_power_watts)
+            )),
+        ]),
+        area,
+    );
+}
+
 fn draw_gpu_detail(frame: &mut Frame, app: &App, area: Rect) {
     if app.gpus.is_empty() {
         let msg = Paragraph::new("No GPUs detected")
             .style(Style::default().fg(RED))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(" GPU Detail "),
-            );
+            .block(Block::default().borders(Borders::ALL).title(" GPU Detail "));
         frame.render_widget(msg, area);
         return;
     }
 
     let gpu = &app.gpus[app.selected_gpu];
 
+    if gpu.vendor == "apple" {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Min(6)])
+            .split(area);
+        draw_gpu_selector(frame, app, chunks[0]);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Apple Silicon · shared SoC · read-only ");
+        let inner = block.inner(chunks[1]);
+        frame.render_widget(block, chunks[1]);
+        draw_apple_row(frame, gpu, inner);
+        return;
+    }
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // GPU selector tabs
-            Constraint::Length(5),  // Key metrics
-            Constraint::Length(3),  // Gauges
-            Constraint::Length(3),  // Gauges
+            Constraint::Length(3), // GPU selector tabs
+            Constraint::Length(5), // Key metrics
+            Constraint::Length(3), // Gauges
+            Constraint::Length(3), // Gauges
             Constraint::Min(5),    // Sparklines
         ])
         .split(area);
@@ -722,7 +794,10 @@ fn draw_gpu_detail(frame: &mut Frame, app: &App, area: Rect) {
     let gpu_gauge = Gauge::default()
         .block(
             Block::default()
-                .title(Span::styled(" GPU Utilization ", Style::default().fg(GREEN)))
+                .title(Span::styled(
+                    " GPU Utilization ",
+                    Style::default().fg(GREEN),
+                ))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(DARK_GRAY)),
         )
@@ -806,10 +881,7 @@ fn draw_gpu_metrics(frame: &mut Frame, gpu: &plows_exporter::collector::GpuSnaps
             Span::styled(" Name: ", Style::default().fg(DARK_GRAY)),
             Span::styled(&gpu.brand, Style::default().fg(WHITE).bold()),
             Span::styled("    UUID: ", Style::default().fg(DARK_GRAY)),
-            Span::styled(
-                truncate_str(&gpu.uuid, 36),
-                Style::default().fg(DARK_GRAY),
-            ),
+            Span::styled(truncate_str(&gpu.uuid, 36), Style::default().fg(DARK_GRAY)),
         ]),
         Line::from(vec![
             Span::styled(" Temp: ", Style::default().fg(DARK_GRAY)),
@@ -830,15 +902,9 @@ fn draw_gpu_metrics(frame: &mut Frame, gpu: &plows_exporter::collector::GpuSnaps
         ]),
         Line::from(vec![
             Span::styled(" Clocks: ", Style::default().fg(DARK_GRAY)),
-            Span::styled(
-                format!("{core_mhz} MHz"),
-                Style::default().fg(CYAN),
-            ),
+            Span::styled(format!("{core_mhz} MHz"), Style::default().fg(CYAN)),
             Span::styled(" core  ", Style::default().fg(DARK_GRAY)),
-            Span::styled(
-                format!("{mem_mhz} MHz"),
-                Style::default().fg(CYAN),
-            ),
+            Span::styled(format!("{mem_mhz} MHz"), Style::default().fg(CYAN)),
             Span::styled(" mem", Style::default().fg(DARK_GRAY)),
         ]),
     ];
@@ -870,7 +936,10 @@ fn draw_detail_sparklines(frame: &mut Frame, app: &App, area: Rect) {
 
     // GPU Util
     if idx < app.gpu_util_history.len() {
-        let data: Vec<u64> = app.gpu_util_history[idx].iter().map(|v| *v as u64).collect();
+        let data: Vec<u64> = app.gpu_util_history[idx]
+            .iter()
+            .map(|v| *v as u64)
+            .collect();
         let sparkline = Sparkline::default()
             .block(
                 Block::default()
@@ -886,7 +955,10 @@ fn draw_detail_sparklines(frame: &mut Frame, app: &App, area: Rect) {
 
     // VRAM Util
     if idx < app.mem_util_history.len() {
-        let data: Vec<u64> = app.mem_util_history[idx].iter().map(|v| *v as u64).collect();
+        let data: Vec<u64> = app.mem_util_history[idx]
+            .iter()
+            .map(|v| *v as u64)
+            .collect();
         let sparkline = Sparkline::default()
             .block(
                 Block::default()
@@ -902,7 +974,10 @@ fn draw_detail_sparklines(frame: &mut Frame, app: &App, area: Rect) {
 
     // Temperature
     if idx < app.gpu_temp_history.len() {
-        let data: Vec<u64> = app.gpu_temp_history[idx].iter().map(|v| *v as u64).collect();
+        let data: Vec<u64> = app.gpu_temp_history[idx]
+            .iter()
+            .map(|v| *v as u64)
+            .collect();
         let sparkline = Sparkline::default()
             .block(
                 Block::default()
@@ -918,7 +993,10 @@ fn draw_detail_sparklines(frame: &mut Frame, app: &App, area: Rect) {
 
     // Power
     if idx < app.gpu_power_history.len() {
-        let data: Vec<u64> = app.gpu_power_history[idx].iter().map(|v| *v as u64).collect();
+        let data: Vec<u64> = app.gpu_power_history[idx]
+            .iter()
+            .map(|v| *v as u64)
+            .collect();
         let sparkline = Sparkline::default()
             .block(
                 Block::default()
@@ -953,26 +1031,11 @@ fn draw_processes(frame: &mut Frame, app: &App, area: Rect) {
 
     // Header line
     let header = Line::from(vec![
-        Span::styled(
-            format!("{:<7}", "PID"),
-            Style::default().fg(CYAN).bold(),
-        ),
-        Span::styled(
-            format!("{:<4}", "GPU"),
-            Style::default().fg(MAGENTA).bold(),
-        ),
-        Span::styled(
-            format!("{:<5}", "TYPE"),
-            Style::default().fg(YELLOW).bold(),
-        ),
-        Span::styled(
-            format!("{:<7}", "CPU%"),
-            Style::default().fg(GREEN).bold(),
-        ),
-        Span::styled(
-            format!("{:<8}", "MEM"),
-            Style::default().fg(BLUE).bold(),
-        ),
+        Span::styled(format!("{:<7}", "PID"), Style::default().fg(CYAN).bold()),
+        Span::styled(format!("{:<4}", "GPU"), Style::default().fg(MAGENTA).bold()),
+        Span::styled(format!("{:<5}", "TYPE"), Style::default().fg(YELLOW).bold()),
+        Span::styled(format!("{:<7}", "CPU%"), Style::default().fg(GREEN).bold()),
+        Span::styled(format!("{:<8}", "MEM"), Style::default().fg(BLUE).bold()),
         Span::styled(
             format!("{:<9}", "GPU MEM"),
             Style::default().fg(MAGENTA).bold(),
@@ -987,7 +1050,12 @@ fn draw_processes(frame: &mut Frame, app: &App, area: Rect) {
 
     let mut lines: Vec<Line> = vec![header];
 
-    for proc in app.processes.iter().skip(effective_scroll).take(available_rows) {
+    for proc in app
+        .processes
+        .iter()
+        .skip(effective_scroll)
+        .take(available_rows)
+    {
         let gpu_str = match proc.gpu_index {
             Some(idx) => format!("{:<4}", idx),
             None => format!("{:<4}", "—"),
@@ -1008,13 +1076,14 @@ fn draw_processes(frame: &mut Frame, app: &App, area: Rect) {
         let cpu_color = pct_color(proc.cpu_percent as f64);
 
         let line = Line::from(vec![
-            Span::styled(
-                format!("{:<7}", proc.pid),
-                Style::default().fg(WHITE),
-            ),
+            Span::styled(format!("{:<7}", proc.pid), Style::default().fg(WHITE)),
             Span::styled(
                 gpu_str,
-                Style::default().fg(if proc.gpu_index.is_some() { MAGENTA } else { DARK_GRAY }),
+                Style::default().fg(if proc.gpu_index.is_some() {
+                    MAGENTA
+                } else {
+                    DARK_GRAY
+                }),
             ),
             Span::styled(
                 format!("{:<5}", proc.proc_type),
@@ -1028,13 +1097,14 @@ fn draw_processes(frame: &mut Frame, app: &App, area: Rect) {
                 format!("{:<8}", fmt_bytes(proc.mem_bytes)),
                 Style::default().fg(BLUE),
             ),
-            Span::styled(
-                format!("{:<9}", gpu_mem_str),
-                Style::default().fg(MAGENTA),
-            ),
+            Span::styled(format!("{:<9}", gpu_mem_str), Style::default().fg(MAGENTA)),
             Span::styled(
                 truncate_str(&proc.name, 30),
-                Style::default().fg(if proc.gpu_index.is_some() { WHITE } else { GRAY }),
+                Style::default().fg(if proc.gpu_index.is_some() {
+                    WHITE
+                } else {
+                    GRAY
+                }),
             ),
         ]);
         lines.push(line);
@@ -1070,10 +1140,7 @@ fn draw_footer(frame: &mut Frame, _app: &App, area: Rect) {
     ]);
 
     let info = Line::from(vec![
-        Span::styled(
-            " Plow SMI v0.1.0 ",
-            Style::default().fg(DARK_GRAY),
-        ),
+        Span::styled(" Plow SMI v0.1.0 ", Style::default().fg(DARK_GRAY)),
         Span::styled("│ ", Style::default().fg(DARK_GRAY)),
         Span::styled(
             "github.com/infervisor/plow-smi",
@@ -1081,8 +1148,7 @@ fn draw_footer(frame: &mut Frame, _app: &App, area: Rect) {
         ),
     ]);
 
-    let para = Paragraph::new(vec![keys, info])
-        .style(Style::default().bg(Color::Rgb(30, 30, 46)));
+    let para = Paragraph::new(vec![keys, info]).style(Style::default().bg(Color::Rgb(30, 30, 46)));
     frame.render_widget(para, area);
 }
 
@@ -1097,9 +1163,10 @@ fn draw_help_overlay(frame: &mut Frame, area: Rect) {
 
     let help_text = vec![
         Line::from(""),
-        Line::from(vec![
-            Span::styled("  Keybindings", Style::default().fg(CYAN).bold()),
-        ]),
+        Line::from(vec![Span::styled(
+            "  Keybindings",
+            Style::default().fg(CYAN).bold(),
+        )]),
         Line::from(""),
         Line::from(vec![
             Span::styled("  q / Esc     ", Style::default().fg(RED).bold()),
@@ -1126,21 +1193,16 @@ fn draw_help_overlay(frame: &mut Frame, area: Rect) {
             Span::styled("Scroll (if applicable)", Style::default().fg(WHITE)),
         ]),
         Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                "  Press any key to close",
-                Style::default().fg(DARK_GRAY),
-            ),
-        ]),
+        Line::from(vec![Span::styled(
+            "  Press any key to close",
+            Style::default().fg(DARK_GRAY),
+        )]),
     ];
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(CYAN))
-        .title(Span::styled(
-            " Help ",
-            Style::default().fg(CYAN).bold(),
-        ))
+        .title(Span::styled(" Help ", Style::default().fg(CYAN).bold()))
         .style(Style::default().bg(Color::Rgb(30, 30, 46)));
 
     let para = Paragraph::new(help_text).block(block);
@@ -1162,5 +1224,34 @@ fn truncate_str(s: &str, max_len: usize) -> String {
         s.to_string()
     } else {
         format!("{}…", &s[..max_len.saturating_sub(1)])
+    }
+}
+
+#[cfg(test)]
+mod apple_tests {
+    use super::*;
+    use ratatui::{backend::TestBackend, Terminal};
+    #[test]
+    fn apple_rows_show_unavailable_counters_and_shared_memory() {
+        let gpu = plows_exporter::collector::GpuSnapshot::new(
+            0,
+            "apple",
+            "test".into(),
+            "Apple test".into(),
+            "soc".into(),
+        );
+        let mut terminal = Terminal::new(TestBackend::new(100, 8)).unwrap();
+        terminal
+            .draw(|frame| draw_apple_row(frame, &gpu, frame.area()))
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(text.contains("ANE") && text.contains("N/A"));
+        assert!(text.contains("shared, not VRAM"));
     }
 }

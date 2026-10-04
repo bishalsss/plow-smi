@@ -50,11 +50,19 @@ pub struct GpuSnapshot {
     pub temperature_celsius: Option<i64>,
     /// Fan speed (percentage or RPM depending on vendor).
     pub fan_speed: Option<u32>,
+    /// Optional CPU/NPU/shared-memory telemetry; never treated as dedicated VRAM.
+    pub soc: Option<plows_gpu::SocMetrics>,
 }
 
 impl GpuSnapshot {
     /// Create a new snapshot with only identity fields populated.
-    pub fn new(index: u32, vendor: &'static str, hostname: String, brand: String, uuid: String) -> Self {
+    pub fn new(
+        index: u32,
+        vendor: &'static str,
+        hostname: String,
+        brand: String,
+        uuid: String,
+    ) -> Self {
         Self {
             index,
             vendor,
@@ -72,6 +80,7 @@ impl GpuSnapshot {
             clock_memory_mhz: None,
             temperature_celsius: None,
             fan_speed: None,
+            soc: None,
         }
     }
 }

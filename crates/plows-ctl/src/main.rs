@@ -24,6 +24,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Apple Silicon telemetry (read-only)
+    #[command(subcommand)]
+    Apple(AppleCommands),
     /// List every GPU discovered (NVIDIA + AMD + Intel)
     List {
         #[arg(long, default_value = "text")]
@@ -63,6 +66,22 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
         #[arg(long, default_value = "json")]
+        format: OutputFormat,
+    },
+}
+
+#[derive(Subcommand)]
+enum AppleCommands {
+    /// List Apple Silicon devices
+    List {
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
+    },
+    /// Show CPU/GPU/Neural Engine and unified-memory metrics
+    Info {
+        #[arg(default_value_t = 0)]
+        gpu: u32,
+        #[arg(long, default_value = "text")]
         format: OutputFormat,
     },
 }
@@ -269,6 +288,10 @@ fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::List { format } => plows_ctl::list::list_all(&format),
+        Commands::Apple(AppleCommands::List { format }) => plows_ctl::apple::list_gpus(&format),
+        Commands::Apple(AppleCommands::Info { gpu, format }) => {
+            plows_ctl::apple::gpu_info(gpu, &format)
+        }
         Commands::Nvidia(cmd) => run_nvidia(cmd),
         Commands::Amd(cmd) => run_amd(cmd),
         Commands::Intel(cmd) => run_intel(cmd),
@@ -284,6 +307,9 @@ fn is_json(f: &OutputFormat) -> bool {
 
 fn wants_json(c: &Commands) -> bool {
     match c {
+        Commands::Apple(AppleCommands::List { format } | AppleCommands::Info { format, .. }) => {
+            is_json(format)
+        }
         Commands::Capabilities { format } | Commands::Apply { format, .. } => is_json(format),
         Commands::Cpu(
             CpuCommands::Info { format }

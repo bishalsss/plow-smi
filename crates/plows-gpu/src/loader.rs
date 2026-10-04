@@ -18,47 +18,66 @@ pub struct GpuManager {
 impl GpuManager {
     /// Probe NVIDIA → AMD → Intel independently and keep every success.
     pub fn discover() -> Self {
+        Self::discover_filtered(|_| true)
+    }
+
+    /// Probe only selected vendors, avoiding unused backend sampler threads.
+    pub fn discover_filtered(allows: impl Fn(crate::Vendor) -> bool) -> Self {
         let mut backends: Vec<Box<dyn GpuBackend>> = Vec::new();
 
-        match NvidiaBackend::try_load() {
-            Ok(b) => {
-                info!(
-                    devices = b.device_count(),
-                    "Loaded NVIDIA backend"
-                );
-                backends.push(Box::new(b));
-            }
-            Err(GpuError::LibraryNotFound { .. }) => {
-                info!("Missing NVML");
-            }
-            Err(e) => {
-                warn!(error = %e, "NVIDIA backend unavailable");
-            }
-        }
-
-        match AmdBackend::try_load() {
-            Ok(b) => {
-                info!(devices = b.device_count(), "Loaded AMD backend");
-                backends.push(Box::new(b));
-            }
-            Err(GpuError::LibraryNotFound { .. }) => {
-                info!("Missing AMD SMI");
-            }
-            Err(e) => {
-                warn!(error = %e, "AMD backend unavailable");
+        if allows(crate::Vendor::Nvidia) {
+            match NvidiaBackend::try_load() {
+                Ok(b) => {
+                    info!(devices = b.device_count(), "Loaded NVIDIA backend");
+                    backends.push(Box::new(b));
+                }
+                Err(GpuError::LibraryNotFound { .. }) => {
+                    info!("Missing NVML");
+                }
+                Err(e) => {
+                    warn!(error = %e, "NVIDIA backend unavailable");
+                }
             }
         }
 
-        match IntelBackend::try_load() {
-            Ok(b) => {
-                info!(devices = b.device_count(), "Loaded Intel backend");
-                backends.push(Box::new(b));
+        if allows(crate::Vendor::Amd) {
+            match AmdBackend::try_load() {
+                Ok(b) => {
+                    info!(devices = b.device_count(), "Loaded AMD backend");
+                    backends.push(Box::new(b));
+                }
+                Err(GpuError::LibraryNotFound { .. }) => {
+                    info!("Missing AMD SMI");
+                }
+                Err(e) => {
+                    warn!(error = %e, "AMD backend unavailable");
+                }
             }
-            Err(GpuError::LibraryNotFound { .. }) => {
-                info!("Missing Level Zero");
+        }
+
+        if allows(crate::Vendor::Intel) {
+            match IntelBackend::try_load() {
+                Ok(b) => {
+                    info!(devices = b.device_count(), "Loaded Intel backend");
+                    backends.push(Box::new(b));
+                }
+                Err(GpuError::LibraryNotFound { .. }) => {
+                    info!("Missing Level Zero");
+                }
+                Err(e) => {
+                    warn!(error = %e, "Intel backend unavailable");
+                }
             }
-            Err(e) => {
-                warn!(error = %e, "Intel backend unavailable");
+        }
+
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        if allows(crate::Vendor::Apple) {
+            match crate::AppleBackend::try_load() {
+                Ok(b) => {
+                    info!(devices = b.device_count(), "Loaded Apple Silicon backend");
+                    backends.push(Box::new(b));
+                }
+                Err(e) => warn!(error = %e, "Apple Silicon backend unavailable"),
             }
         }
 

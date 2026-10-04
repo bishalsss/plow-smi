@@ -1363,6 +1363,8 @@ dependencies = [
 name = "plows-gpu"
 version = "0.1.0"
 dependencies = [
+ "core-foundation-sys",
+ "libc",
  "libloading",
  "thiserror 2.0.18",
  "tracing",

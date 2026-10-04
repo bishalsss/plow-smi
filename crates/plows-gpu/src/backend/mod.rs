@@ -1,10 +1,12 @@
 //! Vendor backend implementations of [`crate::GpuBackend`].
 
 mod amd;
+pub(crate) mod apple;
 mod intel;
 mod nvidia;
 
 pub use amd::AmdBackend;
+pub use apple::AppleBackend;
 pub use intel::IntelBackend;
 pub use nvidia::NvidiaBackend;
 
