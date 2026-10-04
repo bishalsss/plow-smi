@@ -38,7 +38,7 @@
         commonMeta = with pkgs.lib; {
           inherit homepage;
           license = licenses.asl20;
-          platforms = platforms.linux;
+          platforms = platforms.linux ++ [ "aarch64-darwin" ];
         };
 
         # One build compiles the whole workspace; every binary lands in

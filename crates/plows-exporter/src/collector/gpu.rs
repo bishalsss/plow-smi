@@ -18,6 +18,8 @@ pub struct VendorFilter {
     pub amd: bool,
     /// Include Intel devices.
     pub intel: bool,
+    /// Include Apple Silicon devices.
+    pub apple: bool,
 }
 
 impl VendorFilter {
@@ -27,6 +29,7 @@ impl VendorFilter {
             nvidia: true,
             amd: true,
             intel: true,
+            apple: true,
         }
     }
 
@@ -35,12 +38,14 @@ impl VendorFilter {
             Vendor::Nvidia => self.nvidia,
             Vendor::Amd => self.amd,
             Vendor::Intel => self.intel,
+            Vendor::Apple => self.apple,
             _ => false,
         }
     }
 
-    fn any(self) -> bool {
-        self.nvidia || self.amd || self.intel
+    /// Whether at least one vendor is enabled.
+    pub fn any(self) -> bool {
+        self.nvidia || self.amd || self.intel || self.apple
     }
 }
 
@@ -130,7 +135,7 @@ impl Collector for GpuCollector {
             ));
         }
 
-        let mgr = GpuManager::discover();
+        let mgr = GpuManager::discover_filtered(|vendor| self.filter.allows(vendor));
         let count: usize = mgr
             .backends()
             .iter()
@@ -195,8 +200,12 @@ impl Collector for GpuCollector {
                 snap.clock_memory_mhz = m.clock_memory;
                 snap.temperature_celsius = m.temperature.map(|t| t as i64);
                 snap.fan_speed = m.fan_speed.map(|f| f as u32);
+                snap.soc = m.soc;
 
-                debug!(index = snap.index, vendor, "Collected GPU metrics via plows-gpu");
+                debug!(
+                    index = snap.index,
+                    vendor, "Collected GPU metrics via plows-gpu"
+                );
                 snapshots.push(snap);
             }
         }

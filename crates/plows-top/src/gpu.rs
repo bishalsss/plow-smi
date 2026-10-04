@@ -13,6 +13,7 @@ pub struct GpuCollector {
     pub driver_version: String,
     pub cuda_version: String,
     initialized: bool,
+    runtime: tokio::runtime::Runtime,
 }
 
 impl GpuCollector {
@@ -47,6 +48,7 @@ impl GpuCollector {
             driver_version,
             cuda_version,
             initialized,
+            runtime: rt,
         }
     }
 
@@ -56,12 +58,9 @@ impl GpuCollector {
             return Vec::new();
         }
 
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("Failed to create tokio runtime");
-
-        rt.block_on(self.inner.collect()).unwrap_or_default()
+        self.runtime
+            .block_on(self.inner.collect())
+            .unwrap_or_default()
     }
 
     /// Collect GPU processes (NVML when available).

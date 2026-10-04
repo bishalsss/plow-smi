@@ -32,6 +32,10 @@ pub struct Config {
     #[arg(long)]
     pub intel: bool,
 
+    /// Enable Apple Silicon GPU, CPU and Neural Engine telemetry.
+    #[arg(long)]
+    pub apple: bool,
+
     /// Enable system metrics collection (CPU, memory, disk, network).
     #[arg(long)]
     pub system: bool,
@@ -40,7 +44,7 @@ pub struct Config {
     #[arg(long)]
     pub tpu: bool,
 
-    /// Enable all collectors (equivalent to --nvidia --amd --intel --system --tpu).
+    /// Enable all collectors (equivalent to --nvidia --amd --intel --apple --system --tpu).
     #[arg(long)]
     pub all: bool,
 
@@ -71,7 +75,12 @@ impl Config {
 
     /// Returns true if any GPU vendor flag is enabled.
     pub fn gpu_enabled(&self) -> bool {
-        self.nvidia_enabled() || self.amd_enabled() || self.intel_enabled()
+        self.nvidia_enabled() || self.amd_enabled() || self.intel_enabled() || self.apple_enabled()
+    }
+
+    /// Returns true if Apple Silicon collection is enabled.
+    pub fn apple_enabled(&self) -> bool {
+        self.apple || self.all
     }
 
     /// Returns true if system collection is enabled (either explicitly or via --all).
@@ -87,5 +96,18 @@ impl Config {
     /// Returns true if no collectors are explicitly enabled.
     pub fn no_collectors_enabled(&self) -> bool {
         !self.gpu_enabled() && !self.system_enabled() && !self.tpu_enabled()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn apple_flag_and_all_enable_gpu_collection() {
+        let apple = Config::parse_from(["plows-exporter", "--apple"]);
+        assert!(apple.apple_enabled() && apple.gpu_enabled());
+        assert!(!apple.nvidia_enabled() && !apple.no_collectors_enabled());
+        let all = Config::parse_from(["plows-exporter", "--all"]);
+        assert!(all.apple_enabled() && all.intel_enabled());
     }
 }

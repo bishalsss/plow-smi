@@ -14,6 +14,8 @@ pub enum Vendor {
     Amd,
     /// Intel (Level Zero Sysman / `libze_loader`).
     Intel,
+    /// Apple Silicon integrated GPU and SoC telemetry (macOS).
+    Apple,
 }
 
 impl Vendor {
@@ -23,6 +25,7 @@ impl Vendor {
             Vendor::Nvidia => "nvidia",
             Vendor::Amd => "amd",
             Vendor::Intel => "intel",
+            Vendor::Apple => "apple",
         }
     }
 }

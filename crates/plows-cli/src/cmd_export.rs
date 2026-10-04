@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use axum::{Router, routing::get};
+use axum::{routing::get, Router};
 use tracing::{info, warn};
 
 use plows_exporter::collector;
@@ -15,34 +15,32 @@ use plows_exporter::collector::Collector;
 use plows_exporter::exporter::prometheus::metrics_handler;
 use plows_exporter::metrics::gpu_metrics::update_gpu_metrics;
 
-pub fn run(nvidia: bool, amd: bool, system: bool, all: bool, port: u16, bind: String) -> Result<()> {
+pub fn run(
+    filter: collector::gpu::VendorFilter,
+    system: bool,
+    all: bool,
+    port: u16,
+    bind: String,
+) -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
 
     rt.block_on(async move {
-        let enable_system = system || all;
-        // Default: GPU (all vendors) + system when nothing was selected.
-        let (enable_nvidia, enable_amd, enable_intel, enable_system) =
-            if !nvidia && !amd && !system && !all {
-                (true, true, true, true)
-            } else if all {
-                (true, true, true, true)
-            } else {
-                (nvidia, amd, false, enable_system)
-            };
+        let default_all = !filter.any() && !system;
+        let enable_system = system || all || default_all;
+        let filter = if all || default_all {
+            collector::gpu::VendorFilter::all()
+        } else {
+            filter
+        };
 
         let mut manager = CollectorManager::new();
 
-        let filter = collector::gpu::VendorFilter {
-            nvidia: enable_nvidia,
-            amd: enable_amd,
-            intel: enable_intel,
-        };
-        if filter.nvidia || filter.amd || filter.intel {
+        if filter.any() {
             info!(
-                "Registering plows-gpu collector (nvidia={} amd={} intel={})",
-                filter.nvidia, filter.amd, filter.intel
+                "Registering plows-gpu collector (nvidia={} amd={} intel={} apple={})",
+                filter.nvidia, filter.amd, filter.intel, filter.apple
             );
             let gpu = collector::gpu::GpuCollector::new(filter);
             if let Err(e) = manager.register(Box::new(gpu)).await {

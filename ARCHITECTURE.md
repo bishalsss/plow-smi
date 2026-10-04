@@ -68,6 +68,12 @@ crates/plows-gpu/src/
 
 **Unsafe** stays in `ffi/`. Callers use owned Rust types only.
 
+**Apple Silicon:** `AppleBackend` owns a one-second sampler thread with
+thread-confined runtime-loaded IOReport/IOKit handles. `refresh()` reads an
+immutable cached snapshot. Optional `DeviceMetrics::soc` reuses `EngineMetrics`
+for CPU/NPU/tier telemetry; unified RAM is separate from GPU VRAM. Unsupported
+metrics remain absent. See [DESIGN_APPLE_SILICON.md](DESIGN_APPLE_SILICON.md).
+
 ## Applications
 
 | App | How it uses `plows-gpu` |
@@ -79,7 +85,8 @@ crates/plows-gpu/src/
 
 ## Vendor filter (exporter)
 
-CLI flags `--nvidia`, `--amd`, `--intel`, `--all` map to `VendorFilter`. Discovery still probes all available libraries; collection only emits matching vendors.
+CLI flags `--nvidia`, `--amd`, `--intel`, `--apple`, `--all` map to `VendorFilter`.
+Filtered discovery probes only selected vendors, avoiding unused sampler threads.
 
 ## Adding a vendor
 

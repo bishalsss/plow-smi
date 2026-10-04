@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use plows_gpu::{AmdBackend, GpuBackend, IntelBackend, NvidiaBackend, PowerLimits};
+use plows_gpu::{AmdBackend, AppleBackend, GpuBackend, IntelBackend, NvidiaBackend, PowerLimits};
 
 use crate::apply::PowerControl;
 use crate::caps::{GpuCaps, NodeCaps};
@@ -14,6 +14,7 @@ enum Slot {
     Nvidia(u32),
     Amd(u32),
     Intel(u32),
+    Apple(u32),
 }
 
 pub struct SystemControl {
@@ -21,6 +22,7 @@ pub struct SystemControl {
     nvidia: Option<NvidiaBackend>,
     amd: Option<AmdBackend>,
     intel: Option<IntelBackend>,
+    apple: Option<AppleBackend>,
     /// Cross-vendor index → slot, in `plows-ctl list` order.
     slots: Vec<Slot>,
     /// Measured once per process: `Ok` if a write of the current limit was
@@ -35,6 +37,7 @@ impl SystemControl {
         let nvidia = NvidiaBackend::try_load().ok();
         let amd = AmdBackend::try_load().ok();
         let intel = IntelBackend::try_load().ok();
+        let apple = AppleBackend::try_load().ok();
         let mut slots = Vec::new();
         if let Some(b) = &nvidia {
             slots.extend((0..b.device_count() as u32).map(Slot::Nvidia));
@@ -45,11 +48,15 @@ impl SystemControl {
         if let Some(b) = &intel {
             slots.extend((0..b.device_count() as u32).map(Slot::Intel));
         }
+        if let Some(b) = &apple {
+            slots.extend((0..b.device_count() as u32).map(Slot::Apple));
+        }
         Self {
             cpu: CpuFreq::system(),
             nvidia,
             amd,
             intel,
+            apple,
             slots,
             settable: HashMap::new(),
         }
@@ -59,7 +66,7 @@ impl SystemControl {
         match slot {
             Slot::Nvidia(i) => self.nvidia.as_ref().and_then(|b| b.power_limits(i).ok()),
             Slot::Amd(i) => self.amd.as_ref().and_then(|b| b.power_limits(i).ok()),
-            Slot::Intel(_) => None,
+            Slot::Intel(_) | Slot::Apple(_) => None,
         }
         .unwrap_or_default()
     }
@@ -76,6 +83,9 @@ impl SystemControl {
                 b.set_power_limit(i, mw).map_err(|e| e.to_string())
             }
             Slot::Intel(_) => Err("Intel GPUs are read-only (Level Zero)".into()),
+            Slot::Apple(_) => {
+                Err("Apple Silicon is read-only; power and clock control are unsupported".into())
+            }
         }
     }
 
@@ -86,6 +96,9 @@ impl SystemControl {
         }
         let r = match self.limits(slot).current_mw {
             Some(cur) => self.write_limit(slot, cur),
+            None if matches!(slot, Slot::Apple(_)) => {
+                Err("Apple Silicon is read-only; power and clock control are unsupported".into())
+            }
             None => Err("the driver does not report the current limit".into()),
         };
         self.settable.insert(index, r.clone());
@@ -134,6 +147,18 @@ impl SystemControl {
                     i,
                     b.devices().into_iter().nth(i as usize),
                     b.driver_version(),
+                    None,
+                    vec![],
+                    None,
+                )
+            }
+            Slot::Apple(i) => {
+                let b = self.apple.as_ref().unwrap();
+                (
+                    "apple",
+                    i,
+                    b.devices().into_iter().nth(i as usize),
+                    None,
                     None,
                     vec![],
                     None,

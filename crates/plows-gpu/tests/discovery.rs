@@ -16,6 +16,12 @@ struct StubBackend {
     metrics: Vec<DeviceMetrics>,
 }
 
+#[test]
+fn filtered_discovery_probes_nothing_when_disabled() {
+    let manager = GpuManager::discover_filtered(|_| false);
+    assert_eq!(manager.backend_count(), 0);
+}
+
 impl StubBackend {
     fn new(vendor: Vendor, n: usize) -> Self {
         let devices = (0..n)
@@ -40,6 +46,7 @@ impl StubBackend {
                 fan_speed: Some(30.0),
                 clock_graphics: Some(1500),
                 clock_memory: Some(7000),
+                ..Default::default()
             })
             .collect();
         Self {
