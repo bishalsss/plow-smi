@@ -39,8 +39,8 @@ pub fn run(
 
         if filter.any() {
             info!(
-                "Registering plows-gpu collector (nvidia={} amd={} intel={})",
-                filter.nvidia, filter.amd, filter.intel
+                "Registering plows-gpu collector (nvidia={} amd={} intel={} apple={})",
+                filter.nvidia, filter.amd, filter.intel, filter.apple
             );
             let gpu = collector::gpu::GpuCollector::new(filter);
             if let Err(e) = manager.register(Box::new(gpu)).await {
