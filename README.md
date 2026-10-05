@@ -70,6 +70,65 @@ nix flake check          # build + test every package
 A NixOS module for running the exporter as a systemd service is available at
 `nixosModules.default` (`services.plow-smi-exporter`).
 
+## Binary releases
+
+[GitHub Releases](https://github.com/infervisor/plow-smi/releases) provide archives
+for Linux and macOS, each on **x86_64** and **aarch64 (ARM64)**. Every archive
+contains all four CLI binaries. Linux AMD, NVIDIA and Intel support share the
+same build; no vendor SDK or GPU is needed to build it. macOS ARM64 additionally
+supports Apple Silicon; macOS x86_64 provides system monitoring, not Apple GPU
+telemetry. GPU support still depends on drivers being available for your platform.
+
+```bash
+# Download the archive for your platform and SHA256SUMS from the same release.
+sha256sum --ignore-missing --check SHA256SUMS  # macOS: shasum -a 256 -c SHA256SUMS
+tar -xzf plow-smi-0.1.0-x86_64-linux.tar.gz
+./plow-smi-0.1.0-x86_64-linux/bin/plow-smi --help
+```
+
+**Keep the extracted directory together.** Add its `bin` directory to `PATH`, or
+symlink an entry point into `/usr/local/bin`; do not copy Linux launchers alone.
+No Nix installation is required to run the releases.
+
+Rust dependencies are statically linked. Linux retains dynamic glibc because a
+fully static musl executable cannot `dlopen` GPU drivers. The archive bundles a
+matching loader and its runtime dependencies under `lib/`, with small `/bin/sh`
+launchers in `bin/`. This avoids requiring the host's glibc version or Nix store.
+Vendor libraries are **not bundled**: install NVIDIA NVML, AMD SMI/ROCm, or Intel
+Level Zero on the host. Standard distribution, NixOS driver and ROCm library
+directories are searched; use `LD_LIBRARY_PATH` for custom installations.
+Vendor libraries and their dependencies must match the host architecture and
+remain compatible with the bundled glibc. Linux kernel compatibility follows
+the glibc baseline pinned in `flake.lock`; real GPU hardware is not exercised by CI.
+
+macOS binaries link only Apple system libraries/frameworks and are ad-hoc signed
+(not notarized). They require no bundled third-party dylibs; OS compatibility
+follows the SDK/deployment target of the pinned Nix toolchain. Apple private
+telemetry APIs retain the compatibility caveats documented below.
+
+### Building and publishing
+
+```bash
+nix build .#release       # result/*.tar.gz and per-archive SHA-256 checksums
+```
+
+`.github/workflows/release.yml` builds and tests all four native platforms on
+pull requests, pushes to `main`/`master`, and manual runs. Linux archives are also
+tested in Ubuntu, Debian and Alpine containers without `/nix/store`, including
+mock NVIDIA/AMD driver loading. Archives use normalized timestamps and ownership.
+Linux runtime source archives include glibc/GCC source, patches, licenses and
+the pinned Nix and application build recipes; these are distributed beside the
+binary archives. Runtime license texts are also included in the Linux binaries'
+archive. Release tooling unit tests run both in Actions and `nix flake check`.
+
+To publish, set `[workspace.package].version` in `Cargo.toml`, refresh
+`Cargo.lock` with Cargo, commit, then push a matching tag (e.g. `v0.1.0`). Tag
+and workspace version must match. Only after every platform passes does the
+workflow publish archives and `SHA256SUMS` to GitHub Releases. Tags containing
+a prerelease suffix are published as prereleases. The workflow uses only
+`GITHUB_TOKEN`; repository Actions must be allowed to create releases. It does
+not overwrite an existing release.
+
 ## Requirements
 
 ### Apple Silicon

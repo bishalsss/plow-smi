@@ -8,6 +8,8 @@ license.workspace = true
 description = "Professional terminal GPU & system monitor — like htop for GPUs"
 
 [dependencies]
+clap = { version = "4", features = ["derive"] }
+
 # Use the exporter library for GPU + system data collection (plows-gpu backed)
 plows-exporter = { path = "../plows-exporter", default-features = true, features = ["gpu", "system"] }
 

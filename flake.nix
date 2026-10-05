@@ -28,17 +28,28 @@
           description = "GPU power & clock control library & CLI — backed by plows-gpu (NVML / AMD SMI)";
         };
       };
-      version = "0.1.0";
+      version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.version;
       homepage = "https://github.com/infervisor/plow-smi";
     in
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
 
+        # Keep local build products out of the Cargo input (including when the
+        # flake is invoked as path:. to test newly added, untracked files).
+        source = pkgs.lib.cleanSourceWith {
+          src = self;
+          filter = path: type:
+            pkgs.lib.cleanSourceFilter path type
+            && builtins.baseNameOf path != "target"
+            && builtins.baseNameOf path != "result"
+            && !(pkgs.lib.hasPrefix "result-" (builtins.baseNameOf path));
+        };
+
         commonMeta = with pkgs.lib; {
           inherit homepage;
           license = licenses.asl20;
-          platforms = platforms.linux ++ [ "aarch64-darwin" ];
+          platforms = platforms.linux ++ platforms.darwin;
         };
 
         # One build compiles the whole workspace; every binary lands in
@@ -47,7 +58,7 @@
         workspace = pkgs.rustPlatform.buildRustPackage {
           pname = "plow-smi-workspace";
           inherit version;
-          src = self;
+          src = source;
           cargoLock.lockFile = ./Cargo.lock;
 
           nativeBuildInputs = [ pkgs.pkg-config ];
@@ -75,6 +86,11 @@
 
         binPackages = pkgs.lib.mapAttrs mkBinPackage binaries;
 
+        release = import ./nix/release.nix {
+          inherit pkgs workspace version system;
+          src = source;
+        };
+
         mkApp = name: pkg: {
           type = "app";
           program = "${pkg}/bin/${name}";
@@ -87,6 +103,8 @@
           # Full workspace build: every binary in one derivation
           # (`nix build .#all`), useful for images/CI artifact bundling.
           all = workspace;
+          # Relocatable archives, usable without Nix installed.
+          inherit release;
         };
 
         apps = (pkgs.lib.mapAttrs mkApp binPackages) // {
@@ -95,6 +113,13 @@
 
         checks = binPackages // {
           workspace-build-and-test = workspace;
+          release-tooling = pkgs.runCommand "plow-smi-release-tooling-tests"
+            { nativeBuildInputs = [ pkgs.python3 ]; }
+            ''
+              export PYTHONDONTWRITEBYTECODE=1
+              python3 -m unittest discover -s ${source}/scripts -p 'test_*.py' -v
+              touch "$out"
+            '';
         };
 
         devShells.default = pkgs.mkShell {
